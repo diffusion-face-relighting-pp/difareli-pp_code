@@ -1,0 +1,1529 @@
+import pytorch_lightning as pl
+import torch as th
+import numpy as np
+import blobfile as bf
+import mani_utils, params_utils, sh_utils, tonemapper, hdr_utils
+import cv2, PIL
+import time
+
+class PLSampling(pl.LightningModule):
+    def __init__(self, 
+                 model_dict, 
+                 diffusion, 
+                 forward_fn, 
+                 reverse_fn, 
+                 cfg, 
+                 args=None, 
+                 denoised_fn=None):
+        
+        super(PLSampling, self).__init__()
+        self.forward_fn = forward_fn
+        self.reverse_fn = reverse_fn
+        self.denoised_fn = denoised_fn
+        self.model_dict = model_dict 
+        self.diffusion = diffusion
+        self.cfg = cfg
+        self.args = args
+        self.const_noise = th.randn((len(cfg.img_model.dpm_cond_img), 3, cfg.img_model.image_size, cfg.img_model.image_size)).cuda()
+        
+    def forward_cond_network(self, model_kwargs):
+        with th.no_grad():
+            if self.cfg.img_cond_model.apply:
+                x = model_kwargs['cond_img'].cuda().float()
+                img_cond = self.model_dict[self.cfg.img_cond_model.name](
+                    x=x,
+                    emb=None,
+                )
+                # Override the condition
+                if self.cfg.img_cond_model.override_cond != "":
+                    model_kwargs[self.cfg.img_cond_model.override_cond] = img_cond
+                else: raise NotImplementedError
+        return model_kwargs
+
+    def reverse_proc(self, x, model_kwargs, progress=True, store_intermediate=True, store_mean=False):
+        # Mimic the ddim_sample_loop or p_sample_loop
+        model_kwargs['const_noise'] = self.const_noise
+        if self.reverse_fn == self.diffusion.ddim_reverse_sample_loop:
+            sample, intermediate = self.reverse_fn(
+                model=self.model_dict[self.cfg.img_model.name],
+                x=x.cuda(),
+                clip_denoised=True,
+                denoised_fn = self.denoised_fn,
+                model_kwargs=model_kwargs,
+                progress=progress,
+                store_intermidiate=store_intermediate,
+                cond_xt_fn=cond_xt_fn if model_kwargs['use_cond_xt_fn'] else None,
+                store_mean=store_mean
+            )
+        else: raise NotImplementedError
+
+        # if store_intermediate:
+            # assert th.all(th.eq(sample['sample'], intermediate[-1]['sample']))
+        return {"final_output":sample, "intermediate":intermediate}
+    
+    def forward_proc(self,
+                     model_kwargs,
+                     noise,
+                     store_intermediate=True,
+                     sdedit=None,
+                     rev_mean=None,
+                     add_mean=None):
+        model_kwargs['const_noise'] = self.const_noise
+        sample, intermediate = self.forward_fn(
+            model=self.model_dict[self.cfg.img_model.name],
+            shape=noise.shape,
+            noise=noise,
+            clip_denoised=self.cfg.diffusion.clip_denoised,
+            denoised_fn=self.denoised_fn,
+            model_kwargs=model_kwargs,
+            store_intermidiate=store_intermediate,
+            cond_xt_fn=cond_xt_fn if model_kwargs['use_cond_xt_fn'] else None,
+            sdedit=sdedit,
+            rev_mean=rev_mean,
+            add_mean=add_mean
+        )
+        if store_intermediate:
+            assert th.all(th.eq(sample['sample'], intermediate[-1]['sample']))
+        return {"final_output":sample, "intermediate":intermediate}
+    
+    def override_modulator(self, cond, val=1):
+        print(f"[#] Override the modulator with {val}")
+        for i in range(len(cond)):
+            if val == 1:
+                cond[i] = th.ones_like(cond[i])
+        return cond
+    
+    def forward_nodpm(self, src_xstart, model_kwargs, t=None):
+        model = self.model_dict[self.cfg.img_model.name]
+        if model_kwargs['dpm_cond_img'] is not None:
+            relight_out = model(th.cat((src_xstart, model_kwargs['dpm_cond_img']), dim=1).float(), t, **model_kwargs)
+        else:
+            relight_out = model(src_xstart.float(), t, **model_kwargs)
+        return relight_out
+        
+    
+def cond_xt_fn(cond, cfg, use_render_itp, t, diffusion, noise, device='cuda'):
+    #NOTE: This specifically run for ['dpm_cond_img']
+    
+    def dpm_noise(x_start, p, k, noise, i):
+        if p is None: return x_start
+        share = True if p.split('-')[0] == 'share' else False
+        masking = p.split('-')[-1]
+        
+        #NOTE: Repeat the noise to used following share/sep noise
+        if share:
+            noise = th.repeat_interleave(input=noise[0:1], dim=0, repeats=x_start.shape[0])
+        else:
+            noise = th.repeat_interleave(input=noise[[i]], dim=0, repeats=x_start.shape[0])
+        if masking == 'dpm_noise_masking':
+            img = cond['image']
+            mask =  cond[f'{k}_mask'].bool()
+            assert th.all(mask == cond[f'{k}_mask'])
+            xt = (diffusion.q_sample(img, t, noise=noise) * mask) + (-th.ones_like(img) * ~mask)
+        elif masking == 'dpm_noise':
+                xt = diffusion.q_sample(x_start, t, noise=noise)
+        else: raise NotImplementedError("[#] Only dpm_noise_masking and dpm_noise is available")
+        return xt
+    
+    if cfg.img_model.apply_dpm_cond_img:
+        dpm_cond_img = []
+        for i, (k, p) in enumerate(zip(cfg.img_model.dpm_cond_img, cfg.img_model.noise_dpm_cond_img)):
+            if ('faceseg' in k) or ('deca' in k): # if 'faceseg' in k:
+                if use_render_itp:
+                    xt = dpm_noise(x_start=cond[f'{k}'], p=p, k=k, i=i, noise=noise)
+                    dpm_cond_img.append(xt)
+                else:
+                    xt = dpm_noise(x_start=cond[f'{k}_img'], p=p, k=k, i=i, noise=noise)
+                    dpm_cond_img.append(xt)
+            else:
+                if use_render_itp: 
+                    tmp_img = cond[f'{k}']
+                else: 
+                    tmp_img = cond[f'{k}_img']
+                dpm_cond_img.append(tmp_img)
+        cond['dpm_cond_img'] = th.cat(dpm_cond_img, dim=1)
+    else:
+        cond['dpm_cond_img'] = None
+    return cond
+
+def get_init_noise(n, mode, img_size, device):
+    '''
+    Return the init_noise used as input.
+    :params mode: mode for sampling noise => 'vary_noise', 'fixed_noise'
+    '''
+    if mode == 'vary_noise':
+        init_noise = th.randn((n, 3, img_size, img_size))
+    elif mode == 'fixed_noise':
+        init_noise = th.cat([th.randn((1, 3, img_size, img_size))] * n, dim=0)
+    else: raise NotImplementedError
+
+    return init_noise.to(device)
+
+def to_tensor(cond, key, device):
+    for k in key:
+        if k not in cond.keys():
+            continue
+        else:
+            if isinstance(cond[k], list):
+                for i in range(len(cond[k])):
+                    cond[k][i] = th.tensor(cond[k][i]).to(device)
+            else:
+                if th.is_tensor(cond[k]):
+                    cond[k] = cond[k].clone().to(device)
+                elif isinstance(cond[k], np.ndarray):
+                    cond[k] = th.tensor(cond[k]).to(device)
+                else:
+                    continue
+    return cond
+
+def eval_mode(model_dict):
+    for k, _ in model_dict.items():
+        model_dict[k].eval()
+    return model_dict
+
+def prepare_cond_sampling_paired(cond, cfg, use_render_itp=False, device='cuda'):
+    """
+    Prepare a condition for encoder network (e.g., adding noise, share noise with DPM)
+    :param noise: noise map used in DPM
+    :param t: timestep
+    :param model_kwargs: model_kwargs dict
+    ###Note: 
+     - cond[f'{k}'_img] is the original one from dataloader
+     - cond[f'{k}'] is the original one render & build_condition_image() fn
+    """
+    
+    if cfg.img_model.apply_dpm_cond_img:
+        dpm_cond_img = []
+        for k in cfg.img_model.dpm_cond_img:
+            if use_render_itp: 
+                tmp_img = cond[f'{k}']
+            else: 
+                tmp_img = cond[f'{k}_img']
+            dpm_cond_img.append(tmp_img.to(device))
+        cond['dpm_cond_img'] = th.cat((dpm_cond_img), dim=1)
+    else:
+        cond['dpm_cond_img'] = None
+        
+    if cfg.img_cond_model.apply:
+        cond_img = []
+        for k in cfg.img_cond_model.in_image:
+            if use_render_itp: 
+                tmp_img = cond[f'{k}']
+            else: 
+                tmp_img = cond[f'{k}_img']
+            print(k, tmp_img.shape)
+            cond_img.append(tmp_img.to(device))
+        cond['cond_img'] = th.cat((cond_img), dim=1).to(device)
+    else:
+        cond['cond_img'] = None
+        
+    return cond
+
+def prepare_cond_sampling(cond, cfg, use_render_itp=False, device='cuda'):
+    """
+    Prepare a condition for encoder network (e.g., adding noise, share noise with DPM)
+    :param noise: noise map used in DPM
+    :param t: timestep
+    :param model_kwargs: model_kwargs dict
+    """
+    out_cond = {}
+    def construct_cond_tensor(pair_cfg, sj_paired):
+        out_shape = cond['src_deca_masked_face_images_woclip'].shape[0] + cond['dst_deca_masked_face_images_woclip'].shape[0]
+        out_cond_img = []
+        for i in range(out_shape):
+            cond_img = []
+            for j, (k, p) in enumerate(pair_cfg):
+                if use_render_itp: 
+                    if sj_paired[j] == 'src':
+                        tmp_img = cond[f'src_{k}'][0:1]
+                    elif sj_paired[j] == 'dst' and i == 0:
+                        tmp_img = cond[f'src_{k}'][0:1]
+                    elif sj_paired[j] == 'dst' and i != 0:
+                        tmp_img = cond[f'dst_{k}'][[i-1]]
+                    else: raise NotImplementedError
+                else: 
+                    tmp_img = cond[f'{k}_img']
+                cond_img.append(tmp_img.to(device))
+            cond_img = th.cat((cond_img), dim=1)
+            out_cond_img.append(cond_img)
+        out_cond_img = th.cat((out_cond_img), dim=0)
+
+        return out_cond_img.to(device)
+    
+    if cfg.img_model.apply_dpm_cond_img:
+        out_cond['dpm_cond_img'] = construct_cond_tensor(pair_cfg=list(zip(cfg.img_model.dpm_cond_img, 
+                                                                  cfg.img_model.noise_dpm_cond_img)),
+                                                        sj_paired = cfg.img_model.sj_paired)
+    else:
+        out_cond['dpm_cond_img'] = None
+        
+    if cfg.img_cond_model.apply:
+        out_cond['cond_img'] = construct_cond_tensor(pair_cfg=list(zip(cfg.img_cond_model.in_image, 
+                                                                  cfg.img_cond_model.noise_dpm_cond_img)),
+                                                     sj_paired = cfg.img_cond_model.sj_paired)
+    else:
+        out_cond['cond_img'] = None
+    # out_cond['src_deca_masked_face_images_woclip'] = cond['src_deca_masked_face_images_woclip']
+    # out_cond['dst_deca_masked_face_images_woclip'] = cond['dst_deca_masked_face_images_woclip']
+    
+    # # NOTE: Create the 'cond_params' for non-spatial condition given "params_selector list"
+    # assert not th.allclose(src['dict']['light'], dst['dict']['light'])
+    # cond_params = []
+    # for p in self.cfg.param_model.params_selector:
+    #     if p == 'src_light':
+    #         cond_params.append(src['dict']['light'])
+    #         # print(p, src['dict']['light'].shape)
+    #         # print(p, src['dict']['light'])
+    #     elif p == 'dst_light':
+    #         cond_params.append(dst['dict']['light'])
+    #         # print(p, dst['dict']['light'].shape)
+    #         # print(p, dst['dict']['light'])
+    #     else:
+    #         assert th.allclose(src['dict'][p], dst['dict'][p])
+    #         cond_params.append(src['dict'][p])
+    #         # print(p, src['dict'][p].shape)
+    #         # print(p, dst['dict'][p].shape)
+    # # exit()
+    # out_cond['cond_params'] = th.cat(cond_params, dim=1).float()
+    return out_cond
+
+def blur_map(cond, misc):
+    blurred_sm = []
+    args = misc['args']
+    start_sd = 0.1
+    end_sd = 7
+    blur_params = list(np.linspace(start_sd, end_sd, cond['dst_shadow_diff_with_weight_simplified'].shape[0]))
+    if args.blurmap_source:
+        x = cond['dst_shadow_diff_with_weight_simplified'][0:1].clone().cpu().numpy()
+        x = np.transpose(x, (0, 2, 3, 1))
+        x = np.repeat(x, 3, -1)[0]
+        for sigma in blur_params:
+            sigma_temp = np.round(sigma)
+            kz = sigma_temp*3*2 if (sigma_temp*3*2) % 2 == 1 else (sigma_temp*3*2)+1
+            kz = int(kz)
+            x_blurred = cv2.GaussianBlur(x.copy(), (kz, kz), sigma)
+            blurred_sm.append(x_blurred)
+    
+    elif args.blurmap_each:
+        x = cond['dst_shadow_diff_with_weight_simplified'].clone().cpu().numpy()
+        x = np.transpose(x, (0, 2, 3, 1))   # B x H x W x C
+        x = np.repeat(x, 3, -1)
+        for i in range(x.shape[0]):
+            x_i = x[i]
+            sigma_i = blur_params[i]
+            sigma_temp = np.round(sigma_i)
+            kz = sigma_temp*3*2 if (sigma_temp*3*2) % 2 == 1 else (sigma_temp*3*2)+1
+            kz = int(kz)
+            x_blurred_i = cv2.GaussianBlur(x_i.copy(), (kz, kz), sigma_i)
+            blurred_sm.append(x_blurred_i)
+    else:
+        raise NotImplementedError("[#] Only blurmap_source and blurmap_each is available...")
+            
+    blurred_sm = np.stack(blurred_sm, axis=0)
+    blurred_sm = np.transpose(blurred_sm, (0, 3, 1, 2))
+    blurred_sm = blurred_sm[:, 0:1, ...]
+    blurred_sm = th.tensor(blurred_sm).to(cond['dst_shadow_diff_with_weight_simplified'].device)
+    cond['dst_shadow_diff_with_weight_simplified'] = blurred_sm
+    return cond, misc
+
+def build_condition_image_hdr(cond, misc, force_render=False):
+    src_idx = misc['src_idx']
+    dst_idx = misc['dst_idx']
+    n_step = misc['n_step']
+    batch_size = misc['batch_size']
+    render_batch_size = misc['render_batch_size']
+    avg_dict = misc['avg_dict']
+    dataset = misc['dataset']
+    args = misc['args']
+    condition_img = misc['condition_img']
+    img_size = misc['img_size']
+    itp_func = misc['itp_func']
+    deca_obj = misc['deca_obj']
+    clip_ren = None
+    Lmax = misc['Lmax']
+    tonemap_percentile = misc['tonemap_percentile']
+    tonemap_max_mapping = misc['tonemap_max_mapping']
+    
+    def prep_render(cond, cond_img_name):
+        #Note: Preprocessing to separate the shading ref or shadow mask into src-dst
+        rendered_tmp = []
+        for j in range(n_step):
+            if 'woclip' in cond_img_name:
+                #NOTE: Input is the npy array -> Used cv2.resize() to handle
+                r_tmp = deca_rendered[j].cpu().numpy().transpose((1, 2, 0))
+                r_tmp = cv2.resize(r_tmp, (img_size, img_size), cv2.INTER_AREA)
+                r_tmp = np.transpose(r_tmp, (2, 0, 1))
+                clip_ren = False
+            else:
+                r_tmp = deca_rendered[j].mul(255).add_(0.5).clamp_(0, 255)
+                r_tmp = np.transpose(r_tmp.cpu().numpy(), (1, 2, 0))
+                r_tmp = r_tmp.astype(np.uint8)
+                r_tmp = dataset.augmentation(PIL.Image.fromarray(r_tmp))
+                r_tmp = dataset.prep_cond_img(r_tmp, cond_img_name, i)
+                r_tmp = np.transpose(r_tmp, (2, 0, 1))
+                r_tmp = (r_tmp / 127.5) - 1
+                clip_ren = True
+            rendered_tmp.append(r_tmp)
+        rendered_tmp = np.stack(rendered_tmp, axis=0)
+        cond[cond_img_name] = th.tensor(rendered_tmp).cuda()
+        cond[f'src_{cond_img_name}'] = th.tensor(rendered_tmp[[0]]).cuda()
+        cond[f'dst_{cond_img_name}'] = th.tensor(rendered_tmp[1:]).cuda()
+        return cond, clip_ren
+    
+    def prep_shadow(cond, cond_img_name):
+        shadow_diff_tmp = []
+        for j in range(n_step):
+            sd_tmp = shadow_mask[j]
+            sdkk_tmp = shadow_kk[j]
+            if args.postproc_shadow_mask_smooth_keep_shadow_shading:
+                #NOTE: Keep the shadow shading from perturbed light
+                m_glasses_and_eyes = cond[f'{cond_img_name}_meg_mask'][src_idx].cpu().numpy()
+                # Masking out the bg area
+                m_face_parsing = cond[f'{cond_img_name}_mface_mask'][src_idx].cpu().numpy()
+                m_face = m_face_parsing
+
+                sd_tmp_proc = ((1 - sd_tmp)) * (m_face * (1-m_glasses_and_eyes)) * ((1 - sdkk_tmp) > 0)
+                sd_tmp = sd_tmp_proc
+
+            elif args.postproc_shadow_mask_smooth:
+                #NOTE: Do not keep the shading of shadows from perturbed light
+                m_glasses_and_eyes = cond[f'{cond_img_name}_meg_mask'][src_idx].cpu().numpy()
+                # Masking out the bg area
+                m_face_parsing = cond[f'{cond_img_name}_mface_mask'][src_idx].cpu().numpy()
+                m_face = m_face_parsing
+                
+                sd_tmp_proc = (((1 - sd_tmp) > 0) * 1.0) * (m_face * (1-m_glasses_and_eyes)) * ((1 - sdkk_tmp) > 0.0)
+                sd_tmp = sd_tmp_proc
+
+            shadow_diff_tmp.append(sd_tmp)
+            
+        shadow_diff_tmp = np.stack(shadow_diff_tmp, axis=0)
+        cond[cond_img_name] = th.tensor(shadow_diff_tmp).cuda()
+        
+        # if args.inverse_with_shadow_diff:
+        print("[#] Setting frame-0th with shadow_diff (Replacing frame-0th)...")
+        shadow_diff_tmp[0] = cond['shadow_diff_img'][src_idx]
+        cond[f'src_{cond_img_name}'] = th.tensor(shadow_diff_tmp[[0]]).cuda()
+        cond[f'dst_{cond_img_name}'] = th.tensor(shadow_diff_tmp[1:]).cuda()
+        return cond
+    
+    # Handling the render face: Output is ['light'] with [T, 27]
+    if np.any(['deca' in i for i in condition_img]) or np.any(['shadow_mask' in i for i in condition_img]) or np.any(['shadow_diff' in i for i in condition_img]):
+        # Render the face
+        if 'render_face' in args.interpolate:
+            #NOTE: Render w/ interpolated light (Mainly use this)
+            if args.spiral_sh:
+                print("[#] Spiral SH mode of src light...")
+                old_n_step = n_step
+                interp_cond, new_n_step = mani_utils.spiral_sh(cond, src_idx=src_idx, n_step=n_step, light_traj_path=args.light_traj_path)
+                n_step = new_n_step
+                misc['n_step'] = n_step # Revoking n_step
+                print(f"[#] Revoking the n_step: {old_n_step} -> {n_step}")
+            elif args.fancy_rotate_sh:
+                print("[#] Fancy Rotate SH mode of src light...")
+                old_n_step = n_step
+                interp_cond, new_n_step = mani_utils.fancy_rotate_sh(cond, src_idx=src_idx)
+                n_step = new_n_step
+                misc['n_step'] = n_step # Revoking n_step
+                print(f"[#] Revoking the n_step: {old_n_step} -> {n_step}")
+            elif args.rotate_sh:
+                print("[#] Rotate SH mode of src light...")
+                interp_cond = mani_utils.rotate_sh(cond, src_idx=src_idx, n_step=n_step, axis=args.rotate_sh_axis)
+            elif args.force_diffuse_sh:
+                print("[#] Diffuse SH mode of src light...")
+                interp_cond = mani_utils.diffuse_sh(cond, src_idx=src_idx, n_step=n_step, interpolate=args.itp_diffuse_sh)
+                interp_cond['light'][0:1] = cond['light'][src_idx]  # Always keep the first frame as src light
+            elif args.rotate_sh_dst:
+                print("[#] Rotate SH mode of dst light...")
+                interp_cond = mani_utils.rotate_sh(cond, src_idx=dst_idx, n_step=n_step, axis=args.rotate_sh_axis)
+                interp_cond['light'][0:1] = cond['light'][src_idx]  # Always keep the first frame as src light
+            elif args.sh_file is not None:
+                print("[#] Load SH mode from file: ", args.sh_file)
+                sh_from_file = np.load(args.sh_file, allow_pickle=True) # B x 9 x 3
+                interp_cond = {'light':sh_from_file.reshape(-1, 27)}    # B x 27
+                if args.rotate_sh_file:
+                    print("[#] Rotate SH (from file)...")
+                    interp_cond = mani_utils.rotate_sh(interp_cond, src_idx=0, n_step=n_step, axis=args.rotate_sh_axis)
+                # Apply rotate_sh_axis
+                interp_cond['light'][0:1] = cond['light'][src_idx]  # Always keep the first frame as src light
+            elif args.same_sh:
+                print("[#] Same SH mode of src light...")
+                interp_cond = {'light':cond['light'][src_idx].repeat(n_step, 1)}
+            else:
+                print("[#] Interpolating SH mode from src->dst light...")
+                interp_cond = mani_utils.iter_interp_cond(cond, interp_set=['light'], src_idx=src_idx, dst_idx=dst_idx, n_step=n_step, interp_fn=itp_func)
+            cond.update(interp_cond)
+        
+        elif 'render_face_hdr' in args.interpolate:
+            #NOTE: Render w/ HDR light
+            hdr_file = args.hdr
+            
+        else:
+            #NOTE: Render w/ same light
+            repeated_cond = mani_utils.repeat_cond_params(cond, base_idx=src_idx, n=n_step, key=['light'])
+            cond.update(repeated_cond)
+        
+        
+        if args.scale_sh:
+            print(f"[#] Scaling the SH with {args.scale_sh} on [1:n_step] (target light)...")
+            cond['light'][1:] = cond['light'][1:] * args.scale_sh
+            
+    # Handling the render face
+    if np.any(['deca' in i for i in condition_img]) or force_render:
+        start_t = time.time()
+        if np.any(['deca_masked' in n for n in condition_img]) or force_render:
+            mask = params_utils.load_flame_mask()
+        else: mask=None
+        
+        #NOTE: Render DECA in minibatch
+        # sub_step = mani_utils.ext_sub_step(n_step, batch_size)
+        print("[#] Total steps : ", n_step)
+        sub_step = mani_utils.ext_sub_step(n_step, render_batch_size)
+        load_deca_time = time.time() - start_t
+        all_render = []
+        render_time = []
+        all_shadow_mask = []
+        all_shadow_kk = []
+        all_render_ld = []
+        pure_render_deca_time = []
+        pure_render_shadow_time = []
+        
+        """
+        #NOTE: Render DECA to get
+        # 1. deca_rendered under self light on [0:1, ...] # 2 x 3 x H x W
+        # 2. normal_images  # 2 x 3 x H x W
+        # 3. alpha_images   # 2 x 1 x H x W
+        # 4. albedo_images  # 2 x 3 x H x W
+        B = 2 because we render with n=2, all images are from src_idx
+        """
+
+        start_sub_render_deca_t = time.time()
+        deca_rendered, orig_visdict = params_utils.render_deca(deca_params=cond, 
+                                                            idx=src_idx, n=2, 
+                                                            avg_dict=avg_dict, 
+                                                            render_mode=args.render_mode, 
+                                                            rotate_normals=args.rotate_normals, 
+                                                            mask=mask,
+                                                            deca_obj=deca_obj,
+                                                            repeat=True, 
+                                                            )
+        sub_render_deca_t = time.time() - start_sub_render_deca_t
+        
+        # rotate_axis = 'azimuth' if args.rotate_sh_axis == 2 else ('roll' if args.rotate_sh_axis == 1 else 'elevation')
+        if args.rotate_sh_axis == 1:
+            rotate_axis = 'azimuth'
+        elif args.rotate_sh_axis == 2:
+            rotate_axis = 'roll'
+        else: raise NotImplementedError("[#] Only rotate_sh_axis=1 (roll) and 2 (azimuth) is available for HDR rendering...")
+        
+        print(args.rotate_sh_axis, rotate_axis, type(args.rotate_sh_axis), type(rotate_axis), args.rotate_sh)
+        print(f"[#] Render shading reference with HDR on {rotate_axis} axis.")
+        print("[#] HDR file: ", hdr_file)
+        print("[#] Lmax: ", Lmax)
+        print("[#] Tonemap percentile: ", tonemap_percentile)
+        print("[#] Tonemap max mapping: ", tonemap_max_mapping)
+        hdr_frames, shading, shading_grey, coeff_sh, all_sh, unfold_sh_coeff = hdr_utils.render_with_hdr(hdr_file=args.hdr, 
+                                                                                             normal_images=orig_visdict['normal_images'], 
+                                                                                             alpha_images=orig_visdict['alpha_images'],
+                                                                                             albedo_images=orig_visdict['albedo_images'],
+                                                                                             n_step=n_step-1, 
+                                                                                             rotate_axis=rotate_axis, 
+                                                                                             Lmax=Lmax,
+                                                                                             tonemap_percentile=tonemap_percentile,
+                                                                                             tonemap_max_mapping=tonemap_max_mapping,
+                                                                                            )
+        if args.use_shading_grey:
+            print("[#] Using grey-scale shading...")
+            shading_grey = th.tensor(shading_grey).to(deca_rendered.device)
+            shading_grey = shading_grey.permute(0, 3, 1, 2)
+            deca_rendered = th.cat([deca_rendered[0:1], shading_grey], dim=0)
+        else:
+            print("[#] Using color shading...")
+            shading = th.tensor(shading).to(deca_rendered.device)
+            shading = shading.permute(0, 3, 1, 2)
+            deca_rendered = th.cat([deca_rendered[0:1], shading], dim=0)
+        
+        print("[#] Done: get sh shape: ", all_sh.shape)  # [n_step-1 x (Lmax+1)^2 x 3]
+        sh_light = th.tensor(all_sh.transpose(0, 2, 1)).to(cond['light'].device)    # [n_step-1 x 3 x 9] => [n_step - 1 x 9 x 3]
+        if args.Lmax > 2:
+            print(f"[#] Since using Lmax={args.Lmax}, reduce SH to Lmax=2...")
+            sh_light = sh_light[:, :9, :]
+            print(f"[#] Reduced SH shape: {sh_light.shape}")
+        sh_light = sh_light.reshape(n_step-1, 27)
+        src_light = cond['light'][0:1].clone()
+        cond['light'] = th.cat([src_light, sh_light], dim=0)
+        
+        for i in range(len(sub_step)-1):
+            print(f"[#] Sub step rendering : {sub_step[i]} to {sub_step[i+1]}")
+            start = sub_step[i]
+            end = sub_step[i+1]
+            sub_cond = cond.copy()
+            sub_cond['light'] = sub_cond['light'][start:end, :]
+            # Deca rendered : B x 3 x H x W
+            print("[#] Rendering with the shadow mask from face + scalp of render face...")
+            if i == 0:
+                load_deca_for_shadow_time = time.time()
+                flame_face_scalp = params_utils.load_flame_mask(['face', 'scalp', 'left_eyeball', 'right_eyeball'])
+                deca_obj_face_scalp = params_utils.init_deca(mask=flame_face_scalp, rasterize_type=args.rasterize_type) # Init DECA with mask only once
+                load_deca_for_shadow_time = time.time() - load_deca_for_shadow_time
+                
+            if int(args.rotate_sh_axis) == 1 and (args.rotate_sh or args.rotate_sh_dst):
+                print("[#] HDR - Fixing the axis 1 by negate ray[1]...")
+            
+            # Render for each lighting
+            start_sub_render_shadow_t = time.time()
+            shadow_mask, shadow_kk, render_ld = params_utils.render_shadow_mask_with_smooth_hdr(
+                                            sh_light=sub_cond['light'], # B
+                                            cam=sub_cond['cam'][src_idx],   # [B=2, 3]
+                                            verts=orig_visdict['trans_verts_orig'], # [B=2, 5023, 3]; 
+                                            use_sh_to_ld_region=args.use_sh_to_ld_region,
+                                            deca={'face_scalp':deca_obj_face_scalp}, 
+                                            axis_1=int(args.rotate_sh_axis)==1 and (args.rotate_sh or args.rotate_sh_dst),
+                                            hdr=True,
+                                            device='cpu',   # Prevent OOM
+                                            up_rate=args.up_rate_for_AA,
+                                            org_h=img_size, org_w=img_size,
+                                            rt_dict={'pt_round':args.pt_round, 'pt_radius':args.pt_radius, 'rt_regionG_scale':args.rt_regionG_scale, 'scale_depth':args.scale_depth}
+                                        )
+            sub_render_shadow_t = time.time() - start_sub_render_shadow_t
+            if i == len(sub_step)-2:
+                del deca_obj_face_scalp
+            all_render.append(deca_rendered)
+            render_time.append(time.time() - start_t)
+            pure_render_deca_time.append(sub_render_deca_t)
+            pure_render_shadow_time.append(sub_render_shadow_t)
+            
+            all_shadow_mask.append(shadow_mask[:, None, ...])
+            all_shadow_kk.append(shadow_kk[:, None, ...])
+            all_render_ld.append(render_ld)
+            
+        
+        if args.use_sh_to_ld_region:
+            all_render_ld = th.cat(all_render_ld, dim=0)
+            cond['render_ld'] = all_render_ld
+        else:
+            all_render_ld = None
+            cond['render_ld'] = None
+
+        render_time = np.mean(render_time) + load_deca_time
+        cond['render_time'] = render_time
+        cond['pure_render_deca_time'] = pure_render_deca_time
+        cond['pure_render_shadow_time'] = pure_render_shadow_time
+        cond['load_deca_time'] = load_deca_time
+        cond['load_deca_for_shadow_time'] = load_deca_for_shadow_time
+        print("Rendering time : ", time.time() - start_t)
+        
+        if args.fixed_render and (args.shadow_diff_inc_c or args.shadow_diff_dec_c or args.shadow_diff_blurmap):
+            print("[#] Fixed the Deca renderer for Reshadowing...")
+            print(all_render[0].shape) # List of  [B x 3 x H x W, ...]
+            ff = all_render[0][0:1]
+            fidx = int(args.shadow_diff_fidx_frac * n_step)
+            rf = all_render[0][fidx:fidx+1].repeat_interleave(repeats=n_step-1, dim=0)
+            deca_rendered = th.cat((ff, rf), dim=0)
+            print(deca_rendered.shape)
+        elif args.fixed_render:
+            print("[#] Fixed the Deca renderer")
+            print(all_render[0].shape) # List of  [B x 3 x H x W, ...]
+            deca_rendered = all_render[0][0:1].repeat_interleave(repeats=n_step, dim=0)
+            print(deca_rendered.shape)
+        else:
+            deca_rendered = th.cat(all_render, dim=0)
+            
+        if args.fixed_shadow:
+            print("[#] Fixed the Shadow mask")
+            print(all_shadow_mask[0].shape) # List of  [B x 1 x H x W, ...]
+            shadow_mask = all_shadow_mask[0][0:1].repeat_interleave(repeats=n_step, dim=0)
+            print(shadow_mask.shape)
+        else:
+            shadow_mask = th.cat(all_shadow_mask, dim=0)
+            shadow_kk = th.cat(all_shadow_kk, dim=0)
+        
+        
+        
+        
+    print("Conditoning with image : ", condition_img)
+    for i, cond_img_name in enumerate(condition_img):
+        if ('faceseg' in cond_img_name) or ('face_structure' in cond_img_name):
+            bg_tmp = [cond[f"{cond_img_name}_img"][src_idx]] * n_step
+            if th.is_tensor(cond[f"{cond_img_name}_img"][src_idx]):
+                bg_tmp = th.stack(bg_tmp, dim=0)
+            else:
+                bg_tmp = np.stack(bg_tmp, axis=0)
+            cond[f"src_{cond_img_name}"] = th.tensor(bg_tmp)
+            
+        elif ('deca' in cond_img_name):
+            cond, clip_ren = prep_render(cond, cond_img_name)
+        elif ('shadow_diff' in cond_img_name):
+            cond = prep_shadow(cond, cond_img_name)
+    
+    if force_render:
+        cond, clip_ren = prep_render(cond, 'deca_masked_face_images_woclip')
+
+    misc['hdr_frames'] = hdr_frames
+    misc['Lmax'] = 2
+    return cond, clip_ren, misc
+
+
+def build_condition_image(cond, misc, force_render=False):
+    src_idx = misc['src_idx']
+    dst_idx = misc['dst_idx']
+    n_step = misc['n_step']
+    batch_size = misc['batch_size']
+    render_batch_size = misc['render_batch_size']
+    avg_dict = misc['avg_dict']
+    dataset = misc['dataset']
+    args = misc['args']
+    condition_img = misc['condition_img']
+    img_size = misc['img_size']
+    itp_func = misc['itp_func']
+    deca_obj = misc['deca_obj']
+    clip_ren = None
+    
+    def prep_render(cond, cond_img_name, adjust_contrast=None, alpha_images=None):
+        #Note: Preprocessing to separate the shading ref or shadow mask into src-dst
+        rendered_tmp = []
+        for j in range(n_step):
+            if 'woclip' in cond_img_name:
+                #NOTE: Input is the npy array -> Used cv2.resize() to handle
+                r_tmp = deca_rendered[j].cpu().numpy().transpose((1, 2, 0))
+                r_tmp = cv2.resize(r_tmp, (img_size, img_size), cv2.INTER_AREA)
+                r_tmp = np.transpose(r_tmp, (2, 0, 1))
+                clip_ren = False
+            else:
+                r_tmp = deca_rendered[j].mul(255).add_(0.5).clamp_(0, 255)
+                r_tmp = np.transpose(r_tmp.cpu().numpy(), (1, 2, 0))
+                r_tmp = r_tmp.astype(np.uint8)
+                r_tmp = dataset.augmentation(PIL.Image.fromarray(r_tmp))
+                r_tmp = dataset.prep_cond_img(r_tmp, cond_img_name, i)
+                r_tmp = np.transpose(r_tmp, (2, 0, 1))
+                r_tmp = (r_tmp / 127.5) - 1
+                clip_ren = True
+            
+            rendered_tmp.append(r_tmp)
+        rendered_tmp = np.stack(rendered_tmp, axis=0)
+        cond[cond_img_name] = th.tensor(rendered_tmp).cuda()
+        cond[f'src_{cond_img_name}'] = th.tensor(rendered_tmp[[0]]).cuda()
+        cond[f'dst_{cond_img_name}'] = th.tensor(rendered_tmp[1:]).cuda()
+        
+        if adjust_contrast is not None:
+            print(f"[#] Adjusting the contrast of rendered images with: down={adjust_contrast[0]}, up={adjust_contrast[1]}.")
+            assert alpha_images is not None, "[#] Need alpha images to adjust the contrast of rendered images."
+            print(f"[#] Alpha images shape: {th.cat(alpha_images).shape}, rendered_tmp shape: {rendered_tmp.shape}")
+            alpha_images = th.cat(alpha_images).cpu().numpy() > 0.5  # [B, 1, H, W]
+            alpha_images = np.repeat(alpha_images, 3, axis=1)  # [B, 3, H, W]
+            new_rendered_tmp = []
+            for i in range(rendered_tmp.shape[0]):
+                r_tmp = rendered_tmp[i]
+                a_tmp = alpha_images[i]
+                median = np.median(r_tmp[a_tmp], axis=0, keepdims=True)
+                
+                up = adjust_contrast[1]
+                down = adjust_contrast[0]
+                above = r_tmp > median
+                below = ~above
+                above = above & a_tmp
+                below = below & a_tmp
+                new_r_tmp = r_tmp.copy()
+                new_r_tmp[above] = (r_tmp[above] - median) * up + median
+                new_r_tmp[below] = (r_tmp[below] - median) * down + median
+                new_r_tmp = np.clip(new_r_tmp, 0, 1)
+                new_rendered_tmp.append(new_r_tmp)
+            new_rendered_tmp = np.stack(new_rendered_tmp, axis=0)
+            new_rendered_tmp = th.tensor(new_rendered_tmp).cuda()
+            # from vis_utils import plot_image
+            # plot_image(new_rendered_tmp, [3], "0to1", "new_r.png")
+            cond[f'dst_{cond_img_name}'] = new_rendered_tmp[1:]
+            
+        return cond, clip_ren
+    
+    def prep_shadow(cond, cond_img_name):
+        shadow_diff_tmp = []
+        for j in range(n_step):
+            sd_tmp = shadow_mask[j]
+            sdkk_tmp = shadow_kk[j]
+            if args.postproc_shadow_mask_smooth_keep_shadow_shading:
+                #NOTE: Keep the shadow shading from perturbed light
+                m_glasses_and_eyes = cond[f'{cond_img_name}_meg_mask'][src_idx].cpu().numpy()
+                # Masking out the bg area
+                m_face_parsing = cond[f'{cond_img_name}_mface_mask'][src_idx].cpu().numpy()
+                m_face = m_face_parsing
+
+                sd_tmp_proc = ((1 - sd_tmp)) * (m_face * (1-m_glasses_and_eyes)) * ((1 - sdkk_tmp) > 0)
+                sd_tmp = sd_tmp_proc
+
+            elif args.postproc_shadow_mask_smooth:
+                #NOTE: Do not keep the shading of shadows from perturbed light
+                m_glasses_and_eyes = cond[f'{cond_img_name}_meg_mask'][src_idx].cpu().numpy()
+                # Masking out the bg area
+                m_face_parsing = cond[f'{cond_img_name}_mface_mask'][src_idx].cpu().numpy()
+                m_face = m_face_parsing
+                
+                sd_tmp_proc = (((1 - sd_tmp) > 0) * 1.0) * (m_face * (1-m_glasses_and_eyes)) * ((1 - sdkk_tmp) > 0.0)
+                sd_tmp = sd_tmp_proc
+
+            shadow_diff_tmp.append(sd_tmp)
+            
+        shadow_diff_tmp = np.stack(shadow_diff_tmp, axis=0)
+        cond[cond_img_name] = th.tensor(shadow_diff_tmp).cuda()
+        
+        # if args.inverse_with_shadow_diff:
+        print("[#] Setting frame-0th with shadow_diff (Replacing frame-0th)...")
+        shadow_diff_tmp[0] = cond['shadow_diff_img'][src_idx]
+        cond[f'src_{cond_img_name}'] = th.tensor(shadow_diff_tmp[[0]]).cuda()
+        cond[f'dst_{cond_img_name}'] = th.tensor(shadow_diff_tmp[1:]).cuda()
+        return cond
+    
+    # Handling the render face
+    if np.any(['deca' in i for i in condition_img]) or np.any(['shadow_mask' in i for i in condition_img]) or np.any(['shadow_diff' in i for i in condition_img]):
+        # Render the face
+        if args.sh_grid_size is not None:
+            #NOTE: Render w/ grid light 
+            cond['light'] = params_utils.grid_sh(sh=cond['light'][src_idx], n_grid=args.sh_grid_size, sx=args.sh_span_x, sy=args.sh_span_y, sh_scale=args.sh_scale, use_sh=args.use_sh).reshape(-1, 27)
+        elif 'render_face' in args.interpolate:
+            #NOTE: Render w/ interpolated light (Mainly use this)
+            if args.spiral_sh:
+                print("[#] Spiral SH mode of src light...")
+                old_n_step = n_step
+                interp_cond, new_n_step = mani_utils.spiral_sh(cond, src_idx=src_idx, n_step=n_step, light_traj_path=args.light_traj_path)
+                n_step = new_n_step
+                misc['n_step'] = n_step # Revoking n_step
+                print(f"[#] Revoking the n_step: {old_n_step} -> {n_step}")
+            elif args.fancy_rotate_sh:
+                print("[#] Fancy Rotate SH mode of src light...")
+                old_n_step = n_step
+                interp_cond, new_n_step = mani_utils.fancy_rotate_sh(cond, src_idx=src_idx)
+                n_step = new_n_step
+                misc['n_step'] = n_step # Revoking n_step
+                print(f"[#] Revoking the n_step: {old_n_step} -> {n_step}")
+            elif args.rotate_sh:
+                print("[#] Rotate SH mode of src light...")
+                interp_cond = mani_utils.rotate_sh(cond, src_idx=src_idx, n_step=n_step, axis=args.rotate_sh_axis)
+            elif args.force_diffuse_sh:
+                print("[#] Diffuse SH mode of src light...")
+                interp_cond = mani_utils.diffuse_sh(cond, src_idx=src_idx, n_step=n_step, interpolate=args.itp_diffuse_sh)
+                interp_cond['light'][0:1] = cond['light'][src_idx]  # Always keep the first frame as src light
+            elif args.rotate_sh_dst:
+                print("[#] Rotate SH mode of dst light...")
+                interp_cond = mani_utils.rotate_sh(cond, src_idx=dst_idx, n_step=n_step, axis=args.rotate_sh_axis)
+                interp_cond['light'][0:1] = cond['light'][src_idx]  # Always keep the first frame as src light
+            elif args.sh_file is not None:
+                print("[#] Load SH mode from file: ", args.sh_file)
+                sh_from_file = np.load(args.sh_file, allow_pickle=True) # B x 9 x 3
+                interp_cond = {'light':sh_from_file.reshape(-1, 27)}    # B x 27
+                if args.rotate_sh_file:
+                    print("[#] Rotate SH (from file)...")
+                    interp_cond = mani_utils.rotate_sh(interp_cond, src_idx=0, n_step=n_step, axis=args.rotate_sh_axis)
+                # Apply rotate_sh_axis
+                interp_cond['light'][0:1] = cond['light'][src_idx]  # Always keep the first frame as src light
+            elif args.same_sh:
+                print("[#] Same SH mode of src light...")
+                interp_cond = {'light':cond['light'][src_idx].repeat(n_step, 1)}
+            else:
+                print("[#] Interpolating SH mode from src->dst light...")
+                interp_cond = mani_utils.iter_interp_cond(cond, interp_set=['light'], src_idx=src_idx, dst_idx=dst_idx, n_step=n_step, interp_fn=itp_func)
+            cond.update(interp_cond)
+        else:
+            #NOTE: Render w/ same light
+            repeated_cond = mani_utils.repeat_cond_params(cond, base_idx=src_idx, n=n_step, key=['light'])
+            cond.update(repeated_cond)
+            
+        if args.scale_sh:
+            print(f"[#] Scaling the SH with {args.scale_sh} on [1:n_step] (target light)...")
+            cond['light'][1:] = cond['light'][1:] * args.scale_sh
+            
+            
+    # Handling the render face
+    if np.any(['deca' in i for i in condition_img]) or force_render:
+        start_t = time.time()
+        if np.any(['deca_masked' in n for n in condition_img]) or force_render:
+            mask = params_utils.load_flame_mask()
+        else: mask=None
+        
+        #NOTE: Render DECA in minibatch
+        print("[#] Total steps : ", n_step)
+        sub_step = mani_utils.ext_sub_step(n_step, render_batch_size)
+        load_deca_time = time.time() - start_t
+        all_render = []
+        all_alpha_images = []
+        render_time = []
+        all_shadow_mask = []
+        all_shadow_kk = []
+        all_render_ld = []
+        pure_render_deca_time = []
+        pure_render_shadow_time = []
+        
+        for i in range(len(sub_step)-1):
+            print(f"[#] Sub step rendering : {sub_step[i]} to {sub_step[i+1]}")
+            start = sub_step[i]
+            end = sub_step[i+1]
+            sub_cond = cond.copy()
+            sub_cond['light'] = sub_cond['light'][start:end, :]
+            # Deca rendered : B x 3 x H x W
+            start_sub_render_deca_t = time.time()
+            deca_rendered, orig_visdict = params_utils.render_deca(deca_params=sub_cond, 
+                                                                idx=src_idx, n=end-start, 
+                                                                avg_dict=avg_dict, 
+                                                                render_mode=args.render_mode, 
+                                                                rotate_normals=args.rotate_normals, 
+                                                                mask=mask,
+                                                                deca_obj=deca_obj,
+                                                                repeat=True)
+            # print(orig_visdict.keys())
+            # print(orig_visdict['alpha_images'].shape)
+            # from vis_utils import plot_image
+            # plot_image(orig_visdict['alpha_images'], [1], "0to1", "test_alpha.png")
+            # exit()
+            deca_alpha_images = orig_visdict['alpha_images']  # [B, 1, H, W]
+            sub_render_deca_t = time.time() - start_sub_render_deca_t
+            print("[#] Rendering with the shadow mask from face + scalp of render face...")
+            if i == 0:
+                load_deca_for_shadow_time = time.time()
+                flame_face_scalp = params_utils.load_flame_mask(['face', 'scalp', 'left_eyeball', 'right_eyeball'])
+                deca_obj_face_scalp = params_utils.init_deca(mask=flame_face_scalp, rasterize_type=args.rasterize_type) # Init DECA with mask only once
+                load_deca_for_shadow_time = time.time() - load_deca_for_shadow_time
+            if args.rotate_sh_axis == 0 and (args.rotate_sh or args.rotate_sh_dst):
+                print("[#] Fixing the axis 0 by negate ray[0]...")
+            elif args.rotate_sh_axis == 1 and (args.rotate_sh or args.rotate_sh_dst):
+                print("[#] Fixing the axis 1 by negate ray[1]...")
+            
+            start_sub_render_shadow_t = time.time()
+            shadow_mask, shadow_kk, render_ld = params_utils.render_shadow_mask_with_smooth(
+                                            sh_light=sub_cond['light'], 
+                                            cam=sub_cond['cam'][src_idx],
+                                            verts=orig_visdict['trans_verts_orig'], 
+                                            use_sh_to_ld_region=args.use_sh_to_ld_region,
+                                            deca={'face_scalp':deca_obj_face_scalp}, 
+                                            axis_0=args.rotate_sh_axis==0 and (args.rotate_sh or args.rotate_sh_dst),
+                                            axis_1=args.rotate_sh_axis==1 and (args.rotate_sh or args.rotate_sh_dst),
+                                            device='cpu',   # Prevent OOM
+                                            up_rate=args.up_rate_for_AA,
+                                            org_h=img_size, org_w=img_size,
+                                            rt_dict={'pt_round':args.pt_round, 'pt_radius':args.pt_radius, 'rt_regionG_scale':args.rt_regionG_scale, 'scale_depth':args.scale_depth}
+                                        )
+            sub_render_shadow_t = time.time() - start_sub_render_shadow_t
+            if i == len(sub_step)-2:
+                del deca_obj_face_scalp
+            all_render.append(deca_rendered)
+            all_alpha_images.append(deca_alpha_images)
+            render_time.append(time.time() - start_t)
+            pure_render_deca_time.append(sub_render_deca_t)
+            pure_render_shadow_time.append(sub_render_shadow_t)
+            
+            all_shadow_mask.append(shadow_mask[:, None, ...])
+            all_shadow_kk.append(shadow_kk[:, None, ...])
+            all_render_ld.append(render_ld)
+            
+        
+        if args.use_sh_to_ld_region:
+            all_render_ld = th.cat(all_render_ld, dim=0)
+            cond['render_ld'] = all_render_ld
+        else:
+            all_render_ld = None
+            cond['render_ld'] = None
+
+        render_time = np.mean(render_time) + load_deca_time
+        cond['render_time'] = render_time
+        cond['pure_render_deca_time'] = pure_render_deca_time
+        cond['pure_render_shadow_time'] = pure_render_shadow_time
+        cond['load_deca_time'] = load_deca_time
+        cond['load_deca_for_shadow_time'] = load_deca_for_shadow_time
+        print("Rendering time : ", time.time() - start_t)
+        
+        if args.fixed_render and (args.shadow_diff_inc_c or args.shadow_diff_dec_c or args.shadow_diff_blurmap):
+            print("[#] Fixed the Deca renderer for Reshadowing...")
+            print(all_render[0].shape) # List of  [B x 3 x H x W, ...]
+            ff = all_render[0][0:1]
+            fidx = int(args.shadow_diff_fidx_frac * n_step)
+            rf = all_render[0][fidx:fidx+1].repeat_interleave(repeats=n_step-1, dim=0)
+            deca_rendered = th.cat((ff, rf), dim=0)
+            print(deca_rendered.shape)
+        elif args.fixed_render:
+            print("[#] Fixed the Deca renderer")
+            print(all_render[0].shape) # List of  [B x 3 x H x W, ...]
+            deca_rendered = all_render[0][0:1].repeat_interleave(repeats=n_step, dim=0)
+            print(deca_rendered.shape)
+        else:
+            deca_rendered = th.cat(all_render, dim=0)
+            
+        if args.fixed_shadow:
+            print("[#] Fixed the Shadow mask")
+            print(all_shadow_mask[0].shape) # List of  [B x 1 x H x W, ...]
+            shadow_mask = all_shadow_mask[0][0:1].repeat_interleave(repeats=n_step, dim=0)
+            print(shadow_mask.shape)
+        else:
+            shadow_mask = th.cat(all_shadow_mask, dim=0)
+            shadow_kk = th.cat(all_shadow_kk, dim=0)
+        
+        
+    print("Conditoning with image : ", condition_img)
+    for i, cond_img_name in enumerate(condition_img):
+        if ('faceseg' in cond_img_name) or ('face_structure' in cond_img_name):
+            bg_tmp = [cond[f"{cond_img_name}_img"][src_idx]] * n_step
+            if th.is_tensor(cond[f"{cond_img_name}_img"][src_idx]):
+                bg_tmp = th.stack(bg_tmp, dim=0)
+            else:
+                bg_tmp = np.stack(bg_tmp, axis=0)
+            cond[f"src_{cond_img_name}"] = th.tensor(bg_tmp)
+        elif ('deca' in cond_img_name):
+            cond, clip_ren = prep_render(cond, cond_img_name, adjust_contrast=args.adjust_contrast, alpha_images=all_alpha_images)
+        elif ('shadow_diff' in cond_img_name):
+            cond = prep_shadow(cond, cond_img_name)
+    
+    if force_render:
+        cond, clip_ren = prep_render(cond, 'deca_masked_face_images_woclip')
+    
+    return cond, clip_ren, misc
+
+def shadow_diff_website_reshadow_postproc(cond, misc, device='cuda'):
+    # For reshadow results on website
+    
+    def blur_map(s_map):
+        blurred_sm = []
+        start_sd = 0.1
+        end_sd = 7
+        blur_params = list(np.linspace(start_sd, end_sd, s_map.shape[0]))
+        x = s_map.clone().cpu().numpy()
+        x = np.transpose(x, (0, 2, 3, 1))   # B x H x W x C
+        x = np.repeat(x, 3, -1)
+        for i in range(x.shape[0]):
+            x_i = x[i]
+            sigma_i = blur_params[i]
+            sigma_temp = np.round(sigma_i)
+            kz = sigma_temp*3*2 if (sigma_temp*3*2) % 2 == 1 else (sigma_temp*3*2)+1
+            kz = int(kz)
+            x_blurred_i = cv2.GaussianBlur(x_i.copy(), (kz, kz), sigma_i)
+            blurred_sm.append(x_blurred_i)
+            
+        blurred_sm = np.stack(blurred_sm, axis=0)
+        blurred_sm = np.transpose(blurred_sm, (0, 3, 1, 2))
+        blurred_sm = blurred_sm[:, 0:1, ...]
+        blurred_sm = th.tensor(blurred_sm).to(cond['dst_shadow_diff_with_weight_simplified'].device)
+        return blurred_sm
+    
+    inp_map = cond['src_shadow_diff_with_weight_simplified'].clone()
+    inp_map = (inp_map > 0.) * 1.0
+    assert inp_map.shape[0] == 1
+    
+    # Only diffuse
+    # n = misc['n_step'] - 1
+    # max_c = 8.481700287326827 # 7.383497233314015
+    # min_c = -4.989461058405101 # -4.985533880236826
+    # c_val_src = (cond['shadow'][0] - min_c) / (max_c - min_c)  # Scale to 0-1
+    # print(f"[#] C value {c_val_src} from {cond['shadow'][0].flatten()}")
+    # diffuse = np.linspace(c_val_src, 0, n).flatten()
+    # seq = th.tensor(diffuse[..., None, None, None]).to(inp_map.device)
+    # inp_map = th.repeat_interleave(inp_map, repeats=seq.shape[0], dim=0)
+    # inp_map = blur_map(inp_map)
+    # print("[#] Sequence: ", seq.shape)
+    # print("[#] Map: ", inp_map.shape)
+    # print("[#] Map values: ", th.unique(inp_map))
+    
+    # for i in range(inp_map.shape[0]):
+    #     blur_map_i = inp_map[i:i+1]
+    #     seq_i = seq[i:i+1]
+    #     blur_map_i = blur_map_i * seq_i
+    #     inp_map[i:i+1] = blur_map_i
+    
+    # Both ways
+    n = misc['n_step'] - 1
+    stregthen_render = cond['src_deca_masked_face_images_woclip'][0:1]  # 1 frame
+    
+    # Sub-sampling the diffuse_render by 2 by keep [1st, ..., last] and makesure it's half
+    tmp = cond['dst_deca_masked_face_images_woclip']
+    diffuse_render = tmp[::2]
+    if tmp.shape[0] % 2 == 0:
+        diffuse_render = th.cat((diffuse_render, tmp[-1:]), dim=0)
+    
+    # Repeat the strengthen_render to match the length of (n - diffuse_render)
+    n_diffuse = diffuse_render.shape[0]
+    n_strengthen = n - n_diffuse
+    stregthen_render = th.repeat_interleave(stregthen_render, repeats=n_strengthen, dim=0)
+    assert stregthen_render.shape[0] == n - diffuse_render.shape[0]
+    cond['dst_deca_masked_face_images_woclip'] = th.cat((stregthen_render, diffuse_render), dim=0)
+    print("[#] Strengthen Render: ", stregthen_render.shape)
+    print("[#] Diffuse Render: ", diffuse_render.shape)
+    print("[#] Render: ", cond['dst_deca_masked_face_images_woclip'].shape)
+    
+    
+    max_c = 8.481700287326827 # 7.383497233314015
+    min_c = -4.989461058405101 # -4.985533880236826
+    c_val_src = (cond['shadow'][0] - min_c) / (max_c - min_c)  # Scale to 0-1
+    print(f"[#] C value {c_val_src} from {cond['shadow'][0].flatten()}")
+    c_mani = np.linspace(1, 0, n).flatten()
+    seq = th.tensor(c_mani[..., None, None, None]).to(inp_map.device)
+    inp_map = th.repeat_interleave(inp_map, repeats=seq.shape[0], dim=0)
+    inp_map = (inp_map > 0.) * seq  # Create 1 to 0 sequence
+    inp_map = blur_map(inp_map)
+    print("[#] Sequence: ", seq.shape)
+    print("[#] Map: ", inp_map.shape)
+    print("[#] Map values: ", th.unique(inp_map))
+        
+    print(inp_map.shape)
+    cond['dst_shadow_diff_with_weight_simplified'] = inp_map
+    return cond, misc
+
+def shadow_diff_teaser_postproc(cond, misc, device='cuda'):
+    # For teaser post-processing of shadow_diff
+    # Contains processing shadow_diff chunks
+    # 1. Rotate light
+    # 2. Diffuse Then back to Shadow (At 1st angle)
+    # 3. Rotate light
+    # 4. Diffuse Then back to Shadow (At 2nd angle)
+    # 5. Rotate light to original
+    
+    def blur_map(s_map):
+        blurred_sm = []
+        start_sd = 0.1
+        end_sd = 7
+        blur_params = list(np.linspace(start_sd, end_sd, s_map.shape[0]))
+        x = s_map.clone().cpu().numpy()
+        x = np.transpose(x, (0, 2, 3, 1))   # B x H x W x C
+        x = np.repeat(x, 3, -1)
+        for i in range(x.shape[0]):
+            x_i = x[i]
+            sigma_i = blur_params[i]
+            sigma_temp = np.round(sigma_i)
+            kz = sigma_temp*3*2 if (sigma_temp*3*2) % 2 == 1 else (sigma_temp*3*2)+1
+            kz = int(kz)
+            x_blurred_i = cv2.GaussianBlur(x_i.copy(), (kz, kz), sigma_i)
+            blurred_sm.append(x_blurred_i)
+            
+        blurred_sm = np.stack(blurred_sm, axis=0)
+        blurred_sm = np.transpose(blurred_sm, (0, 3, 1, 2))
+        blurred_sm = blurred_sm[:, 0:1, ...]
+        blurred_sm = th.tensor(blurred_sm).to(cond['dst_shadow_diff_with_weight_simplified'].device)
+        return blurred_sm
+    
+    args = misc['args']
+    light_traj_path = args.light_traj_path
+    light_traj = np.load(light_traj_path, allow_pickle=True).item()['traj']
+    gen_params = np.load(light_traj_path, allow_pickle=True).item()['params']
+    n = gen_params['n']
+    stop_frames = gen_params['stop_frames']
+    repeat = gen_params['repeat1']
+    half = repeat // 2
+    stop_frames[0] -= 1
+    
+    x_dst = cond['dst_shadow_diff_with_weight_simplified']
+    if args.relight_with_given_c:
+        start_c = args.relight_with_given_c
+    else:
+        start_c = 1.0
+        
+    print(f"[#] Relighting with C = {start_c}")
+    x_dst = x_dst * start_c
+    
+    x_dst_new = x_dst.clone()
+    
+    i = 0
+    fid = 0
+    while i < n:
+        if i in stop_frames:
+            # print(f"Stop frame at {i}, processing diffuse frames [{i} to {i+repeat})")
+            proc_frames = x_dst_new[fid:fid+half]
+            proc_frames = blur_map(proc_frames)
+            proc_frames = th.cat((proc_frames, th.flip(proc_frames, [0])), dim=0)
+            
+            diffuse = np.linspace(start_c, 0, half)
+            strengthen = np.linspace(0, start_c, half)
+            rs = np.concatenate((diffuse, strengthen))
+            assert rs.shape[0] == proc_frames.shape[0]
+            rs = rs[..., None, None, None]
+            proc_frames = proc_frames * th.tensor(rs).to(proc_frames.device)
+            x_dst_new[fid:fid+repeat] = proc_frames
+            fid += repeat  # Skip ahead after processing the 30 frames
+            i += 1
+        else:
+            fid += 1
+            i += 1  # Normal increment when not in stop frames
+
+    # plot_image(x_dst, [1], range='0to1', fn='./xdst.png')
+    # plot_image(x_dst_new, [1], range='0to1', fn='./xdst_new.png')
+    cond['dst_shadow_diff_with_weight_simplified'] = x_dst_new
+    return cond, misc
+
+def shadow_diff_gradC_postproc(cond, misc, device='cuda'):
+    # For teaser post-processing of shadow_diff
+    # Contains processing shadow_diff chunks
+    # 1. Rotate light (While keep diffusing)
+    # 2. Get reverse of #1.
+    # 3. Rotate light to specific angle
+    # 4. Do 1 and 2 again
+    
+    def blur_map(s_map):
+        blurred_sm = []
+        start_sd = 0.1
+        end_sd = 7
+        blur_params = list(np.linspace(start_sd, end_sd, s_map.shape[0]))
+        x = s_map.clone().cpu().numpy()
+        x = np.transpose(x, (0, 2, 3, 1))   # B x H x W x C
+        x = np.repeat(x, 3, -1)
+        for i in range(x.shape[0]):
+            x_i = x[i]
+            sigma_i = blur_params[i]
+            sigma_temp = np.round(sigma_i)
+            kz = sigma_temp*3*2 if (sigma_temp*3*2) % 2 == 1 else (sigma_temp*3*2)+1
+            kz = int(kz)
+            x_blurred_i = cv2.GaussianBlur(x_i.copy(), (kz, kz), sigma_i)
+            blurred_sm.append(x_blurred_i)
+            
+        blurred_sm = np.stack(blurred_sm, axis=0)
+        blurred_sm = np.transpose(blurred_sm, (0, 3, 1, 2))
+        blurred_sm = blurred_sm[:, 0:1, ...]
+        blurred_sm = th.tensor(blurred_sm).to(cond['dst_shadow_diff_with_weight_simplified'].device)
+        return blurred_sm
+    
+    args = misc['args']
+    
+    x_dst = cond['dst_shadow_diff_with_weight_simplified']  # B x 1 x H x W
+    if args.relight_with_given_c:
+        start_c = args.relight_with_given_c
+    else:
+        start_c = 1.0
+        
+    # Testing
+    # n_rotate = 10
+    # n_to_a2 = 5
+    
+    n_rotate = 80
+    n_to_a2 = 40
+    
+    x_dst = (x_dst > 0.) * start_c
+    # diffuse_seq = np.linspace(start_c, 0.7, int(n_rotate*0.5))
+    # diffuse_seq_2 = np.linspace(0.7, 0.0, int(n_rotate*0.5))
+    # diffuse_seq = np.concatenate((diffuse_seq, diffuse_seq_2))
+    
+    diffuse_seq = np.linspace(start_c, 0.0, n_rotate)
+    constant_seq = np.ones(n_to_a2) * start_c
+    seq = np.concatenate((diffuse_seq, np.flip(diffuse_seq, 0), 
+                          constant_seq, 
+                          diffuse_seq, np.flip(diffuse_seq, 0), 
+                          constant_seq))
+    seq = seq[..., None, None, None]
+    print("[#] Mani c-sequence: ", seq.shape)
+    x_dst = x_dst * th.tensor(seq).to(x_dst.device)
+    cond['dst_shadow_diff_with_weight_simplified'] = x_dst
+    return cond, misc
+    
+def shadow_diff_with_weight_postproc(cond, misc, device='cuda'):
+    # This function is used to post-process the shadow_diff mask when we inject shadow weight into shadow_diff
+    condition_img = misc['condition_img']
+    n_step = misc['n_step']
+    src_idx = misc['src_idx']
+    dst_idx = misc['dst_idx']
+    args = misc['args']
+    
+    if 'src_shadow_diff_with_weight_simplified' in cond.keys() and 'dst_shadow_diff_with_weight_simplified' in cond.keys():
+        #NOTE: Concatenate the src and dst shadow_diff_with_weight_simplified to process it together
+        cond['src_and_dst_shadow_diff_with_weight_simplified'] = th.cat((cond['src_shadow_diff_with_weight_simplified'], cond['dst_shadow_diff_with_weight_simplified']), dim=0)
+        condition_img.append('src_and_dst_shadow_diff_with_weight_simplified')
+        
+    # Max-Min c-values:  -4.985533880236826 7.383497233314015 from valid set
+    # Max-Min c-values: -4.989461058405101 8.481700287326827
+    max_c = 8.481700287326827 # 7.383497233314015
+    min_c = -4.989461058405101 # -4.985533880236826
+    c_val_src = (cond['shadow'][src_idx] - min_c) / (max_c - min_c)  # Scale to 0-1
+    c_val_src = 1 - c_val_src # Inverse the shadow value
+    c_val_dst = (cond['shadow'][dst_idx] - min_c) / (max_c - min_c)  # Scale to 0-1
+    c_val_dst = 1 - c_val_dst # Inverse the shadow value
+
+    if args.shadow_diff_inc_c:
+        print(f"[#] Increasing the shadow_diff with weight...")
+        if args.reshadow_with_given_c is not None:
+            print(f"[#] From the given C = {args.reshadow_with_given_c} to 1.0 for {n_step-1} steps...")
+            given_c = args.reshadow_with_given_c
+            weight_src = th.linspace(start=given_c, end=1.0, steps=n_step-1).to(device)
+            weight_src = weight_src[..., None, None, None]
+            weight_dst = th.linspace(start=given_c, end=1.0, steps=n_step-1).to(device)
+            weight_dst = weight_dst[..., None, None, None]
+        else:
+            print(f"[#] From the default C = {c_val_src.item()}")
+            weight_src = th.linspace(start=c_val_src.item(), end=1.0, steps=n_step-1).to(device)
+            weight_src = weight_src[..., None, None, None]
+            weight_dst = th.linspace(start=c_val_dst.item(), end=1.0, steps=n_step-1).to(device)
+            weight_dst = weight_dst[..., None, None, None]
+        fix_frame = True 
+    elif args.shadow_diff_dec_c:
+        print("[#] Decreasing the shadow_diff with weight...")
+        if args.reshadow_with_given_c is not None:
+            print(f"[#] From the given C = {args.reshadow_with_given_c} to 0.0 for {n_step-1} steps...")
+            given_c = args.reshadow_with_given_c
+            weight_src = th.linspace(start=given_c, end=0.0, steps=n_step-1).to(device)
+            weight_src = weight_src[..., None, None, None]
+            weight_dst = th.linspace(start=given_c, end=0.0, steps=n_step-1).to(device)
+            weight_dst = weight_dst[..., None, None, None]
+        else:
+            print(f"[#] Default C is {c_val_src.item()}")
+            weight_src = th.linspace(start=c_val_src.item(), end=0.0, steps=n_step-1).to(device)
+            weight_src = weight_src[..., None, None, None]
+            weight_dst = th.linspace(start=c_val_dst.item(), end=0.0, steps=n_step-1).to(device)
+            weight_dst = weight_dst[..., None, None, None]
+        fix_frame = True 
+    elif args.shadow_diff_blurmap:
+        print("[#] Blurring the shadow_diff with weight...")
+        weight_src = c_val_src[..., None, None, None].to(device)
+        weight_dst = c_val_dst[..., None, None, None].to(device)
+        if args.blurmap_reshadow_const_c is not None:
+            weight_src = (weight_src * 0.0) + args.blurmap_reshadow_const_c
+            weight_src = 1 - weight_src
+        elif args.blurmap_reshadow_dec_c_with_given_c is not None:
+            given_c = args.blurmap_reshadow_dec_c_with_given_c
+            weight_src = th.linspace(start=given_c, end=0.0, steps=n_step-1).to(device)
+            weight_src = 1 - weight_src[..., None, None, None]
+        elif args.blurmap_reshadow_inc_c_with_given_c is not None:
+            given_c = args.blurmap_reshadow_inc_c_with_given_c
+            weight_src = th.linspace(start=given_c, end=1.0, steps=n_step-1).to(device)
+            weight_src = 1 - weight_src[..., None, None, None]
+        fix_frame = True
+    elif args.postproc_shadow_mask_smooth_diffuse_to_shadow:
+        print("[#] Diffuse to shadow...")
+        fix_frame = True
+        weight_src = c_val_src[..., None, None, None].to(device)
+        weight_dst = c_val_dst[..., None, None, None].to(device)
+        weight_ph = th.ones_like(c_val_src[..., None, None, None]).to(device)  # Placeholder
+    else:
+        print("[#] No re-weighting for shadow_diff...")
+        print(f"[#] Processing with weight = {c_val_src} and relight...")
+        if ('shadow_diff_with_weight_simplified' in condition_img or 
+            'src_shadow_diff_with_weight_simplified' in condition_img or
+            'dst_shadow_diff_with_weight_simplified' in condition_img):
+            print("[#] Conditioning is shadow_diff_with_weight_simplified, set the weight to c_val...")
+            weight_src = c_val_src[..., None, None, None].to(device)
+            weight_dst = c_val_dst[..., None, None, None].to(device)
+            if args.relight_with_strongest_c:
+                print("[#] Relight with the strongest c_val, set the weight to 0.0...")
+                weight_src = (c_val_src * 0.0).to(device)
+                weight_dst = (c_val_dst * 0.0).to(device)
+        else:
+            print("[#] For supporting DiFaReli_SS (without cast shadows)...")
+            weight_src = c_val_src[..., None, None, None].to(device)
+            weight_dst = c_val_dst[..., None, None, None].to(device)
+        fix_frame = False
+
+    for _, cond_img_name in enumerate(condition_img):
+        if ((cond_img_name == 'shadow_diff_with_weight_simplified') or 
+            (cond_img_name == 'src_and_dst_shadow_diff_with_weight_simplified')
+            ):
+            print(f"[#] Post-processing the {cond_img_name}...")
+            if fix_frame:
+                fidx = int(args.shadow_diff_fidx_frac * n_step)
+                tmp = th.repeat_interleave(cond[cond_img_name][fidx:fidx+1], repeats=n_step-1, dim=0)
+                # Always preserve first frame, the rest is determined by the shadow_diff_fidx_frac
+                sd_img = cond[cond_img_name].clone()
+                sd_img = th.cat((sd_img[0:1], tmp), dim=0)
+            else:
+                sd_img = cond[cond_img_name].clone()
+            
+            if args.relight_with_shadow_diff:
+                # First frame (0 is non-shadow, > 0 is shadow)   
+                sd_shadow = sd_img[0:1] > 0.
+                shadow_area = sd_shadow * (1-weight_src)     # Shadow area assigned weight
+                shadow_ff = shadow_area
+                # Rest of the frames
+                if args.relight_with_dst_c:
+                    shadow_rf = ((sd_img[1:] > 0.) * (1-weight_dst))
+                elif args.relight_with_rand_max_c:
+                    rand_c = th.tensor(np.random.uniform(0.7, 1.0, size=weight_src.shape)).type_as(weight_src)
+                    print(f"[#] Relight with random c_val [0.7 to 1] => {rand_c}")
+                    shadow_rf = ((sd_img[1:] > 0.) * ((weight_dst * 0.) + rand_c))
+                elif args.relight_with_given_c is not None:
+                    print(f"[#] Relight with the given c_val = {args.relight_with_given_c}")
+                    shadow_rf = ((sd_img[1:] > 0.) * ((weight_dst * 0.) + args.relight_with_given_c))
+                else:
+                    shadow_rf = ((sd_img[1:] > 0.) * (1-weight_src))    # Shadow area assigned weight
+
+                # Final frames
+                shadow = th.cat((shadow_ff, shadow_rf), dim=0)
+                out_sd = shadow
+                cond[cond_img_name] = out_sd
+            else:
+                if args.postproc_shadow_mask_smooth_keep_shadow_shading:
+                    #NOTE: Keep the shadow shading from perturbed light
+
+                    # First frame (0 is non-shadow, > 0 is shadow)   
+                    sd_shadow = sd_img[0:1] > 0.
+                    shadow_area = sd_shadow * (1-weight_src)     # Shadow area assigned weight
+                    shadow_ff = shadow_area
+                    # Rest of the frames
+                    if args.relight_with_dst_c:
+                        shadow_rf = (sd_img[1:] * (1-weight_dst))
+                    elif args.relight_with_rand_max_c:
+                        rand_c = th.tensor(np.random.uniform(0.7, 1.0, size=weight_src.shape)).type_as(weight_src)
+                        print(f"[#] Relight with random c_val [0.7 to 1] => {rand_c}")
+                        shadow_rf = ((sd_img[1:] > 0.) * ((weight_dst * 0.) + rand_c))
+                    elif args.relight_with_given_c is not None:
+                        print(f"[#] Relight with the given c_val = {args.relight_with_given_c}")
+                        shadow_rf = ((sd_img[1:] > 0.) * ((weight_dst * 0.) + args.relight_with_given_c))
+                    else:
+                        shadow_rf = (sd_img[1:] * (1-weight_src))    # Shadow area assigned weight
+
+                    # Final frames
+                    shadow = th.cat((shadow_ff, shadow_rf), dim=0)
+                    out_sd = shadow
+                    cond[cond_img_name] = out_sd
+                    print("[#] Unique of out_sd: ", th.unique(out_sd))
+                    print("[#] Unique of shadow_ff: ", th.unique(shadow_ff))
+                    print("[#] Unique of shadow_rf: ", th.unique(shadow_rf))
+                elif args.postproc_shadow_mask_smooth:
+                    #NOTE: Do not keep the shadow shading from perturbed light
+                    # First frame
+                    shadow_ff = sd_img[0:1]
+                    # sd_shadow = sd_img[0:1] > 0.
+                    # shadow_area = sd_shadow * (1-weight_src)     # Shadow area assigned weight
+                    # shadow_ff = shadow_area
+                    # Rest of the frames
+                    if args.relight_with_dst_c:
+                        print(f"[#] Relight with the dst c_val = {weight_dst.flatten()}")
+                        shadow_rf = (sd_img[1:] * (1-weight_dst))
+                    elif args.relight_with_rand_max_c:
+                        rand_c = th.tensor(np.random.uniform(0.7, 1.0, size=weight_src.shape)).type_as(weight_src)
+                        print(f"[#] Relight with random c_val [0.7 to 1] => {rand_c}")
+                        shadow_rf = ((sd_img[1:] > 0.) * ((weight_dst * 0.) + rand_c))
+                    elif args.relight_with_given_c is not None:
+                        print(f"[#] Relight with the given c_val = {args.relight_with_given_c}")
+                        shadow_rf = ((sd_img[1:] > 0.) * ((weight_dst * 0.) + args.relight_with_given_c))
+                    elif args.reshadow_with_given_c is not None:
+                        print(f"[#] Reshadow with the given c_val = {args.reshadow_with_given_c}")
+                        shadow_rf = ((sd_img[1:] > 0.) * ((weight_src)))
+                    elif args.reshadow_gradually_inc_c:
+                        print(f"[#] Gradually increase c from 0.0 to 1.0")
+                        gradual_c = th.linspace(start=0.0, end=1.0, steps=sd_img[1:].shape[0]).to(device)
+                        shadow_rf = ((sd_img[1:] > 0.) * (gradual_c[..., None, None, None]))
+                    else:
+                        print(f"[#] Relight with the src c_val = {weight_src.flatten()}")
+                        shadow_rf = (sd_img[1:] * (1-weight_src))    # Shadow area assigned weight
+                    # Final frames
+                    shadow = th.cat((shadow_ff, shadow_rf), dim=0)
+                    out_sd = shadow
+                    cond[cond_img_name] = out_sd
+                    print("[#] Unique of out_sd: ", th.unique(out_sd))
+                    print("[#] Unique of shadow_ff: ", th.unique(shadow_ff))
+                    print("[#] Unique of shadow_rf: ", th.unique(shadow_rf))
+                elif args.postproc_shadow_mask_smooth_diffuse_to_shadow and fix_frame:
+                    #NOTE: Same as the postproc_shadow_mask_smooth but change the weight from 0.0 -> 1.0
+                    #NOTE: Working with the fixed frame and relight with given c_val
+                    # First frame
+                    shadow_ff = sd_img[0:1]
+                    # Rest of the frames
+                    # Weight use is 0.0 -> given c_val -> 1.0 with the equal step
+                    given_c = args.relight_with_given_c
+                    n_step_diffuse = sd_img[1:].shape[0] // 2
+                    n_step_shadow = sd_img[1:].shape[0] - n_step_diffuse
+                    diffuse_to_given_c = th.linspace(start=0.0, end=given_c, steps=n_step_diffuse).to(device)
+                    given_c_to_shadow = th.linspace(start=given_c, end=1.0, steps=n_step_shadow).to(device)
+                    weight_use = th.cat((diffuse_to_given_c, given_c_to_shadow), dim=0)
+                    weight_use = weight_use[..., None, None, None]
+                    # print(weight_use, weight_use.shape)
+                    # weight_use = weight_ph * weight_use[..., None, None, None]
+                    print(weight_ph.shape, weight_use.shape)
+                    shadow_rf = ((sd_img[1:] > 0.) * (weight_use))
+                    
+                    # Final frames
+                    shadow = th.cat((shadow_ff, shadow_rf), dim=0)
+                    out_sd = shadow
+                    cond[cond_img_name] = out_sd
+                    print("[#] Unique of out_sd: ", th.unique(out_sd))
+                    print("[#] Unique of shadow_ff: ", th.unique(shadow_ff))
+                    print("[#] Unique of shadow_rf: ", th.unique(shadow_rf))
+                else:
+                    print("[#] Please specify either postproc_shadow method...")
+                    raise NotImplementedError
+                
+    # Update the src_and_dst_shadow_diff_with_weight_simplified into src_shadow_diff_with_weight_simplified and dst_shadow_diff_with_weight_simplified
+    if 'src_and_dst_shadow_diff_with_weight_simplified' in condition_img:
+        if args.force_zero_src_shadow:
+            print("[#] Force the src_shadow_diff_with_weight_simplified to 0.0...")
+            cond['src_shadow_diff_with_weight_simplified'] = (cond['src_and_dst_shadow_diff_with_weight_simplified'][0:1] * 0.0)
+        else:
+            cond['src_shadow_diff_with_weight_simplified'] = cond['src_and_dst_shadow_diff_with_weight_simplified'][0:1]
+        cond['dst_shadow_diff_with_weight_simplified'] = cond['src_and_dst_shadow_diff_with_weight_simplified'][1:]
+        print("[#] Shape of src_dst_shadow_diff_with_weight_simplified: ", cond['src_and_dst_shadow_diff_with_weight_simplified'].shape)
+        print("[#] Shape of src_shadow_diff_with_weight_simplified: ", cond['src_shadow_diff_with_weight_simplified'].shape)
+        print("[#] Shape of dst_shadow_diff_with_weight_simplified: ", cond['dst_shadow_diff_with_weight_simplified'].shape)
+    return cond, {'src':weight_src, 'dst':weight_dst}
+
+def shadow_diff_final_postproc(cond, misc):
+    # This function for post-processing the shadow_diff mask 
+    # 1. Smoothing the first and second frame
+    import torchvision
+    condition_img = misc['condition_img']
+    n_step = misc['n_step']
+    src_idx = misc['src_idx']
+    args = misc['args']
+
+    for _, cond_img_name in enumerate(condition_img):
+        if (cond_img_name == 'shadow_diff_with_weight_simplified') or (cond_img_name == 'shadow_diff_with_weight_simplified_inverse'):
+            if args.smooth_SD_to_SM:
+                sm = cond[cond_img_name][0:1].clone()
+                sdiff = cond[cond_img_name][1:2].clone()
+                sm = sm.squeeze(0).permute(1, 2, 0).cpu().numpy()
+                sdiff = sdiff.squeeze(0).permute(1, 2, 0).cpu().numpy()
+                proc_set = {'sm':sm, 'sdiff':sdiff}
+                out = {'sm': [sm], 'sdiff': [sdiff]}
+
+                for k in proc_set.keys():
+                    tmp = proc_set[k].copy()
+                    erosion_size = 2
+                    element = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * erosion_size + 1, 2 * erosion_size + 1),
+                                                (erosion_size, erosion_size))
+                    org = tmp.copy()
+
+
+                    break_cond = True
+                    breaking_repeated = []
+                    while break_cond:
+                        # tmp = ndimage.binary_erosion(tmp, mask=~intr, iterations=1)
+                        # print("Before: ", np.max(tmp), np.min(tmp))
+                        tmp = cv2.erode(tmp, kernel=element, iterations=1)  # with cv2.erode the last dim is squeezed
+                        tmp = tmp[..., None]
+                        # print("After: ", np.max(tmp), np.min(tmp))
+                        tmp = (tmp * ~intr) + (intr * org) # Modified only the area inside intr
+
+                        out[k].append(tmp)
+                        break_cond = (np.logical_and(tmp, intr).sum() / np.logical_or(tmp, intr).sum()) < 0.99
+                        breaking_repeated.append(break_cond)
+                        if len(breaking_repeated) > 20:
+                            break_cond = False if np.mean(breaking_repeated[-10:]) == breaking_repeated[-1] else True
+
+                print(len(out))
+                vids = {}
+                for k in out.keys():
+                    print("[#] Length of out[{}]: {}".format(k, len(out[k])))
+                    vid = np.stack(out[k])
+                    vid = np.repeat(vid, 3, axis=-1)
+                    vid = vid * 255
+                    print(vid.shape)
+                    vids[k] = vid
+                    torchvision.io.write_video('{}.mp4'.format(k), th.tensor(vid), 20)
+
+                final_vid = np.concatenate([vids['sdiff'], vids['sm'][::-1, ...]], axis=0)
+                torchvision.io.write_video('final.mp4', th.tensor(final_vid), 20)
+
+                # subsampling the video to have the equal number of frames for both sdiff and sm (shorter one)
+                shorter = min(len(vids['sdiff']), len(vids['sm']))
+                longer = max(len(vids['sdiff']), len(vids['sm']))
+                idx = np.linspace(0, longer-1, shorter).astype(int)
+
+                if len(vids['sdiff']) < len(vids['sm']):
+                    vids['sm'] = vids['sm'][::-1, ...][idx]
+                else:
+                    vids['sdiff'] = vids['sdiff'][idx]
+
+                # union version
+                final_union_vid = np.logical_or(vids['sdiff'][1:], vids['sm'][:-1])
+                final_union_vid = np.concatenate([vids['sdiff'][0:1] > 0, final_union_vid, vids['sm'][-1:] > 0], axis=0)
+
+
+                final_out = th.tensor(final_out).cuda()
+                cond[cond_img_name] = final_out
+
+                # Append shading referece & face structure to have same length with the morph shadow_diff
+                sr_0 = cond['deca_masked_face_images_woclip'][0:1].repeat_interleave(repeats=sdiff_erd.shape[0], dim=0)
+                sr_1 = cond['deca_masked_face_images_woclip'][1:2].repeat_interleave(repeats=sm_erd.shape[0], dim=0)
+                sr = th.cat((sr_0, sr_1, cond['deca_masked_face_images_woclip'][2:]), dim=0)
+                cond['deca_masked_face_images_woclip'] = sr
+                assert cond[cond_img_name].shape[0] == cond['deca_masked_face_images_woclip'].shape[0]
+                misc['n_step'] = final_out.shape[0]
+                cond['face_structure'] = cond['face_structure'][0:1].repeat_interleave(repeats=final_out.shape[0], dim=0)
+
+    return cond, misc
