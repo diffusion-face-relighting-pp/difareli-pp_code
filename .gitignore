@@ -123,4 +123,15 @@ DECA/data
 
 dataset_generation/misc/
 misc/myset/
-misc/myset2/
+misc/myset2
+**/Arcface/detector/mtcnn/images/
+**/Arcface/detector/mtcnn/weights/
+**/Arcface/detector/retinaface/weights/
+**/Arcface/pretrained/
+**/FFHQ_align/ffhq_env/
+**/FFHQ_align/temp/
+**/FFHQ_align/dat/
+**/DECA/data/
+**/diffae/checkpoints/
+**/diffae/datasets/celeba_anno/
+dataset_generation/prepare_relighting_data/misc/myset2

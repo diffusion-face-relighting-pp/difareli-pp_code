@@ -3,6 +3,12 @@ import os
 import subprocess
 import sys
 
+def get_conda_python(env_name):
+    conda_exe = os.environ.get('CONDA_EXE', os.path.expanduser('~/miniconda3/bin/conda'))
+    conda_base = os.path.dirname(os.path.dirname(conda_exe))
+    return os.path.join(conda_base, 'envs', env_name, 'bin', 'python')
+
+
 parser = argparse.ArgumentParser(description='Create relighting dataset annotations and renderings.')
 parser.add_argument('--image_dir', help='Input images directory', required=True)
 parser.add_argument('--out_dataset_dir', help='Output dataset directory', required=True)
@@ -12,12 +18,27 @@ parser.add_argument('--faceseg', action='store_true', default=False)
 parser.add_argument('--deca', action='store_true', default=False)
 parser.add_argument('--arcface', action='store_true', default=False)
 parser.add_argument('--shadow', action='store_true', default=False)
+parser.add_argument(
+    '--env_ffhq',
+    help='Python executable for FFHQ alignment',
+    default=os.environ.get('ENV_FFHQ', './FFHQ_align/ffhq_env/bin/python'),
+)
+parser.add_argument(
+    '--env_create_dataset',
+    help='Python executable for dataset creation (Arcface, DiffAE-Shadow)',
+    default=os.environ.get('ENV_CREATE_DATASET', get_conda_python('difareli_pp_create_dataset')),
+)
+parser.add_argument(
+    '--env_sampling',
+    help='Python executable for sampling/rendering (FaceSeg, DECA)',
+    default=os.environ.get('ENV_SAMPLING', get_conda_python('difareli_pp_sampling')),
+)
 args = parser.parse_args()
 
 # Python environments
-ENV_FFHQ = "./FFHQ_align/ffhq_env/bin/python"
-ENV_CREATE_DATASET = "/home/mint/miniconda3/envs/difareli_pp_create_dataset/bin/python"
-ENV_SAMPLING = "/home/mint/miniconda3/envs/difareli_pp_sampling/bin/python"
+ENV_FFHQ = args.env_ffhq
+ENV_CREATE_DATASET = args.env_create_dataset
+ENV_SAMPLING = args.env_sampling
 
 SEP_MAJOR = "=" * 100
 SEP_MINOR = "-" * 100

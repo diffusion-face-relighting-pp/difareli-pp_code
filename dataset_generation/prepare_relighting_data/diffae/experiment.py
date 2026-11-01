@@ -973,12 +973,13 @@ def train(conf: TrainConfig, gpus, nodes=1, mode: str = 'train'):
             # # make it a dict of list
             # for k, v in out.items():
             #     out[k] = [v]
-            tgt = f'evals/{conf.name}.txt'
-            dirname = os.path.dirname(tgt)
-            if not os.path.exists(dirname):
-                os.makedirs(dirname)
-            with open(tgt, 'a') as f:
-                f.write(json.dumps(out) + "\n")
+            if 'shadow' not in conf.eval_programs:
+                tgt = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'evals', f'{conf.name}.txt')
+                dirname = os.path.dirname(tgt)
+                if not os.path.exists(dirname):
+                    os.makedirs(dirname)
+                with open(tgt, 'a') as f:
+                    f.write(json.dumps(out) + "\n")
             # pd.DataFrame(out).to_csv(tgt)
     else:
         raise NotImplementedError()

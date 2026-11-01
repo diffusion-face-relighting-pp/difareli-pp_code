@@ -131,6 +131,6 @@ def evaluate(respth='./res/test_res', dspth='./data', cp='model_final_diss.pth')
 
 
 if __name__ == "__main__":
-    evaluate(dspth=args.data, cp=os.path.join(f'{os.path.abspath(os.path.dirname(__file__))}/res/cp', '79999_iter.pth'))
+    evaluate(respth=args.output_path, dspth=args.data, cp=os.path.join(f'{os.path.abspath(os.path.dirname(__file__))}/res/cp', '79999_iter.pth'))
 
 
