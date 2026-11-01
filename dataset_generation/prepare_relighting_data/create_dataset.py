@@ -61,6 +61,7 @@ if __name__ == '__main__':
     dataset_set = args.set
 
     faceseg_out_dir = os.path.join(out_dataset_dir, 'face_segment', dataset_set)
+    faceseg_pupil_out_dir = os.path.join(out_dataset_dir, 'face_segment_with_pupil', dataset_set, 'anno')
     deca_images_out_dir = os.path.join(out_dataset_dir, 'rendered_images', 'deca_masked_face_images')
     params_out_dir = os.path.join(out_dataset_dir, 'params', dataset_set)
 
@@ -118,6 +119,20 @@ if __name__ == '__main__':
             input_dir=image_dir,
             output_dir=faceseg_out_dir,
             cmd=cmd,
+        )
+
+        # NOTE: Running Pupil Extraction (MediaPipe)
+        cmd_pupil = [
+            ENV_CREATE_DATASET, './mediapipe/extract_face_mask_with_pupils.py',
+            '--image_dir', image_dir,
+            '--faceseg_dir', os.path.join(faceseg_out_dir, 'anno'),
+            '--output_path', faceseg_pupil_out_dir,
+        ]
+        run_step(
+            title="Face Segmentation + Pupil Extraction (MediaPipe)",
+            input_dir=f"{image_dir} | {os.path.join(faceseg_out_dir, 'anno')}",
+            output_dir=faceseg_pupil_out_dir,
+            cmd=cmd_pupil,
         )
 
     if args.deca:
