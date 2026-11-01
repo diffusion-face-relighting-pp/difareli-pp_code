@@ -121,7 +121,6 @@ FFHQ_align/ffhq_env/
 FFHQ_align/temp/
 DECA/data
 
-dataset_generation/misc/myset/
-dataset_generation/misc/myset2/
+dataset_generation/misc/
 misc/myset/
 misc/myset2/
