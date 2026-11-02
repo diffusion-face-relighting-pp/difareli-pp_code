@@ -279,7 +279,6 @@ cfg.extra_dataset.pair_per_sj = 1
 # ---------------------------------------------------------------------------- #
 cfg.train = CN()
 cfg.train.debug_mode = False
-cfg.train.log_dir ='/data/mint/difareli_pp/logs/'
 cfg.train.lr = 1e-4
 cfg.train.batch_size = 128
 cfg.train.lr_anneal_steps = 0.0
@@ -293,6 +292,7 @@ cfg.train.same_sampling = True
 cfg.train.sampling_model = "ema"
 cfg.train.resume_checkpoint = ""
 cfg.train.save_ckpt_dir = None
+cfg.train.log_dir ='/data/mint/difareli_pp/logs/'
 cfg.train.logger_dir = "/data/mint/difareli_pp/wandb_logs/"
 cfg.train.logger_mode = "wandb"
 cfg.train.n_gpus = 1
