@@ -288,7 +288,7 @@ class TrainLoop(LightningModule):
     def forward_backward(self, src, dst):
 
         t, _ = self.schedule_sampler.sample(src['arr'].shape[0], self.device)
-        def training_losses(model, src_xstart, dst_xstart, t, model_kwargs=None, mask_loss=None, sd_mask_loss=None):
+        def training_losses(model, src_xstart, dst_xstart, t, model_kwargs=None):
             """
             Compute training losses for a single timestep.
 
@@ -312,20 +312,7 @@ class TrainLoop(LightningModule):
             target = dst_xstart
             assert model_output.shape == target.shape == dst_xstart.shape
             
-            if self.cfg.loss.train_with_sd_mask:
-                sd_mask_loss = sd_mask_loss != 0
-                masked_losses = ((target.type_as(model_output) - model_output) ** 2) * sd_mask_loss
-                if sd_mask_loss.shape[1] == 1:
-                    masked_losses = masked_losses.repeat(1, 3, 1, 1)
-                masked_losses = masked_losses.sum(dim=list(range(1, len(masked_losses.shape)))) / (sd_mask_loss.sum(dim=list(range(1, len(sd_mask_loss.shape)))) + 1e-10)
-                img_losses = mean_flat((target.type_as(model_output) - model_output) ** 2)
-                losses = masked_losses * self.cfg.loss.sd_mask_weight + img_losses
-            else:
-                if mask_loss is not None:
-                    masked_losses = ((target.type_as(model_output) - model_output) ** 2) * mask_loss
-                    losses = masked_losses.sum(dim=list(range(1, len(masked_losses.shape)))) / (mask_loss.sum(dim=list(range(1, len(mask_loss.shape)))) + 1e-10)
-                else:
-                    losses = mean_flat((target.type_as(model_output) - model_output) ** 2)
+            losses = mean_flat((target.type_as(model_output) - model_output) ** 2)
             return {"loss":losses}, None
         
         #NOTE: Prepare condition : Utilize the same schedule from DPM, Add background or any condition.
@@ -341,8 +328,6 @@ class TrainLoop(LightningModule):
             dst_xstart=dst['dict']['raw_image'] if self.cfg.upsampling.apply else dst['dict']['image'],
             t=t,
             model_kwargs=cond,
-            mask_loss=src['dict'][f'{self.cfg.loss.mask_part}_mask'] if self.cfg.loss.train_with_mask else None,
-            sd_mask_loss=src['dict']['shadow_diff_with_weight_simplified_img'],
         )
         model_losses, _ = model_compute_losses()
 
