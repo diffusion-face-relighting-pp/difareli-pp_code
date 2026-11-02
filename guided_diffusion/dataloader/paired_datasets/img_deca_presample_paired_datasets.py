@@ -202,6 +202,8 @@ def load_data_img_deca(
                     extra_input_image, extra_relit_image = _list_image_files_recursively_separate(f"{cfg.extra_dataset.data_dir}/{set_}")
                     input_image.extend(extra_input_image)
                     relit_image.extend(extra_relit_image)
+                else:
+                    extra_input_image, extra_relit_image = [], []
                 in_image_dict[in_image_type] = input_image
                 relit_image_dict[in_image_type] = relit_image
 
