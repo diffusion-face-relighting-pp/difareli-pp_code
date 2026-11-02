@@ -173,6 +173,8 @@ def load_data_img_deca(
                     extra_input_render_image, extra_relit_render_image = _list_image_files_recursively_separate(f"{cfg.extra_dataset.deca_rendered_dir}/{in_image_type}/{set_}/")
                     input_render_image.extend(extra_input_render_image)
                     relit_render_image.extend(extra_relit_render_image)
+                else: 
+                    extra_input_render_image, extra_relit_render_image = [], []
                 in_image_dict[in_image_type] = input_render_image
                 relit_image_dict[in_image_type] = relit_render_image
                 print(f"[#] Total input images of render: {len(input_render_image)} (+{len(extra_input_render_image)} from {cfg.extra_dataset.training_data})")
