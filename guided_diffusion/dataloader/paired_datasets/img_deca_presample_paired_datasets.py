@@ -189,6 +189,8 @@ def load_data_img_deca(
                     extra_input_cs_image, extra_relit_cs_image = _list_image_files_recursively_separate(f"{cfg.extra_dataset.shadow_diff_dir}/{set_}")
                     input_cs_image.extend(extra_input_cs_image)
                     relit_cs_image.extend(extra_relit_cs_image)
+                else:
+                    extra_input_cs_image, extra_relit_cs_image = [], []
                 in_image_dict[in_image_type] = input_cs_image
                 relit_image_dict[in_image_type] = relit_cs_image
                 print(f"[#] Total input images of shadows: {len(input_cs_image)} (+{len(extra_input_cs_image)} from {cfg.extra_dataset.training_data})")
