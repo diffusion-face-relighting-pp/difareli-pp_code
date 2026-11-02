@@ -17,7 +17,10 @@ def make_deepcopyable(model_kwargs, keys):
                 model_kwargs[key] = model_kwargs[key].detach()
             elif isinstance(model_kwargs[key], list):
                 for i in range(len(model_kwargs[key])):
-                    model_kwargs[key][i] = model_kwargs[key][i].detach()
+                    if isinstance(model_kwargs[key][i], float) or isinstance(model_kwargs[key][i], int):
+                        continue
+                    else:
+                        model_kwargs[key][i] = model_kwargs[key][i].detach()
 
     model_kwargs_copy = copy.deepcopy(model_kwargs)
     return model_kwargs_copy

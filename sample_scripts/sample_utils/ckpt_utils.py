@@ -7,15 +7,16 @@ from guided_diffusion.script_util import (
 
 class CkptLoader():
     def __init__(self, log_dir, cfg_name, device=None) -> None:
-        if os.path.exists("/data/mint/model_logs_mount/"):
+
+        if os.path.exists("/data/mint/DiFaReli++/ckpt/"):
+            self.sshfs_mount_path = "/data/mint/DiFaReli++/ckpt/"
+            self.sshfs_path = "/data/mint/DiFaReli++/ckpt/"
+        elif os.path.exists("/data/mint/model_logs_mount/"):
             self.sshfs_mount_path = "/data/mint/model_logs_mount/"
             self.sshfs_path = "/data/mint/model_logs/"
         elif os.path.exists("/data2/mint/model_logs_mount/"):
             self.sshfs_mount_path = "/data2/mint/model_logs_mount/"
             self.sshfs_path = "/data2/mint/model_logs/"
-        elif os.path.exists("/data/mint/DiFaReli++/ckpt/"):
-            self.sshfs_mount_path = "/data/mint/DiFaReli++/ckpt/"
-            self.sshfs_path = "/data/mint/DiFaReli++/ckpt/"
         else:
             raise FileNotFoundError("Please check the model path at /data<1-2>/<username>/model_logs_mount/")
         
@@ -41,6 +42,8 @@ class CkptLoader():
             cfg_file_path = glob.glob("/home2/mint/Dev/DiFaReli/difareli-faster/config/**", recursive=True)
         elif os.path.exists(f"/home/mint/Dev/DiFaReli++/difareli_pp/config/"):
             cfg_file_path = glob.glob("/home/mint/Dev/DiFaReli++/difareli_pp/config/**", recursive=True)
+        elif os.path.exists(f"/home/mint/Dev/DiFaReli++/released/difareli-pp_code/config/"):
+            cfg_file_path = glob.glob("/home/mint/Dev/DiFaReli++/released/difareli-pp_code/config/**", recursive=True)
         cfg_file_path = [cfg_path for cfg_path in cfg_file_path if f"/{self.cfg_name}" in cfg_path]    # Add /{}/ to achieve a case-sensitive of folder
         print("[#] Config Path : ", cfg_file_path)
         assert len(cfg_file_path) <= 1
@@ -52,10 +55,10 @@ class CkptLoader():
     # Log & Checkpoint file 
     def get_model_path(self,):
         # model_logs_path = glob.glob(f"{self.sshfs_mount_path}/*/*/", recursive=True) + glob.glob(f"{self.sshfs_path}/*/", recursive=True)
-        model_logs_path = glob.glob(f"{self.sshfs_mount_path}/*/*/*/", recursive=True) + glob.glob(f"{self.sshfs_path}/*/", recursive=True) + glob.glob(f"{self.sshfs_path}/*/*/", recursive=True) + glob.glob(f"{self.sshfs_path}/*/*/*/", recursive=True) + glob.glob(f"{self.sshfs_mount_path}/*/*/", recursive=True) + glob.glob(f"{self.sshfs_mount_path}/*/*/*/*/", recursive=True)
-        print(glob.glob(f"{self.sshfs_mount_path}/*/*/*/*/", recursive=True))
-        # print(glob.glob(f"{self.sshfs_mount_path}/*/*/*/*/*", recursive=True))
-        
+        # model_logs_path = glob.glob(f"{self.sshfs_mount_path}/*/*/*/", recursive=True) + glob.glob(f"{self.sshfs_path}/*/", recursive=True) + glob.glob(f"{self.sshfs_path}/*/*/", recursive=True) + glob.glob(f"{self.sshfs_path}/*/*/*/", recursive=True) + glob.glob(f"{self.sshfs_mount_path}/*/*/", recursive=True) + glob.glob(f"{self.sshfs_mount_path}/*/*/*/*/", recursive=True)
+        model_logs_path = glob.glob(f"{self.sshfs_mount_path}/*/", recursive=True) + glob.glob(f"{self.sshfs_path}/*/", recursive=True)
+
+        print("[#] Model Logs Path : ", model_logs_path)
         model_path = [m_log for m_log in model_logs_path if f"/{self.log_dir}/" in m_log]    # Add /{}/ to achieve a case-sensitive of folder
         print("[#] Model Path : ")
         for i in range(len(model_path)):

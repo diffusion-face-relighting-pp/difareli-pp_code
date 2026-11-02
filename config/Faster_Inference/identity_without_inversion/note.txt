@@ -1,1 +1,0 @@
-Original architecture borrowed from Difareli (ICCV2023)

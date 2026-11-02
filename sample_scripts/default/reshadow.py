@@ -33,6 +33,7 @@ parser.add_argument('--src_dst', nargs='+', default=[], help='list of src and ds
 parser.add_argument('--render_mode', type=str, default="shape")
 parser.add_argument('--rotate_normals', action='store_true', default=False)
 parser.add_argument('--rotate_sh', action='store_true', default=False)
+parser.add_argument('--rotate_sh_dst', action='store_true', default=False)
 parser.add_argument('--rotate_sh_axis', type=int, default=0)
 parser.add_argument('--spiral_sh', action='store_true', default=False)
 parser.add_argument('--scale_sh', type=float, default=1.0)
@@ -158,7 +159,7 @@ def make_condition(cond, src_idx, dst_idx, n_step=2, itp_func=None):
             if 'faceseg' in k:
                 cond[f'{k}_mask'] = th.stack([cond[f'{k}_mask'][src_idx]] * n_step, dim=0)
         
-    cond, _ = inference_utils.build_condition_image(cond=cond, misc=misc)
+    cond, _, misc = inference_utils.build_condition_image(cond=cond, misc=misc)
     cond = inference_utils.prepare_cond_sampling(cond=cond, cfg=cfg, use_render_itp=True)
     cond['cfg'] = cfg
     if (cfg.img_model.apply_dpm_cond_img) and (np.any(n is not None for n in cfg.img_model.noise_dpm_cond_img)):
