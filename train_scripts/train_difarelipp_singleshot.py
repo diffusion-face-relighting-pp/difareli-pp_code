@@ -7,7 +7,7 @@ import pytorch_lightning as pl
 from guided_diffusion import logger
 from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
 from config.base_config import parse_args
-from guided_diffusion.dataloader.paired_datasets.img_deca_presample_paired_datasets import load_data_img_deca
+from guided_diffusion.dataloader.training_singleshot.img_deca_presample_paired_datasets import load_data_img_deca
 from guided_diffusion.resample import create_named_schedule_sampler
 from guided_diffusion.script_util import (
     create_img_and_diffusion,
