@@ -3,7 +3,7 @@ import argparse
 
 parser = argparse.ArgumentParser()
 # Dataset
-parser.add_argument('--dataset', type=str, required=True)
+parser.add_argument('--dataset_root', type=str, required=True)
 parser.add_argument('--set', type=str, required=True)
 # Model/Config
 parser.add_argument('--step', type=str, required=True)
@@ -43,6 +43,7 @@ parser.add_argument('--add_sh', type=float, default=None)
 parser.add_argument('--sh_grid_size', type=int, default=None)
 parser.add_argument('--sh_span', type=float, default=None)
 parser.add_argument('--diffuse_sh', type=float, default=None)
+parser.add_argument('--itp_diffuse_sh', action='store_true', default=False)
 parser.add_argument('--force_diffuse_sh', action='store_true', default=False)
 parser.add_argument('--diffuse_perc', type=float, default=None)
 parser.add_argument('--rasterize_type', type=str, default='standard')
@@ -208,7 +209,8 @@ def make_condition(cond, src_idx, dst_idx, n_step=2, itp_func=None):
     #                                           src_idx=src_idx, dst_idx=dst_idx, 
     #                                           n_step=n_step, interp_fn=itp_func, 
     #                                           add_shadow=args.add_shadow, vary_shadow_nobound=args.vary_shadow_nobound)
-    interp_cond = mani_utils.iter_interp_cond(cond, interp_set=interp_set, src_idx=src_idx, dst_idx=dst_idx, n_step=n_step, interp_fn=itp_func)
+    # interp_cond = mani_utils.iter_interp_cond(cond, interp_set=interp_set, src_idx=src_idx, dst_idx=dst_idx, n_step=n_step, interp_fn=itp_func)
+    interp_cond = mani_utils.iter_interp_cond(cond, interp_set=interp_set, src_idx=src_idx, dst_idx=dst_idx, n_step=n_step, interp_fn=itp_func, add_remove_shadow=args.add_remove_shadow, add_shadow_to=args.add_shadow_to, remove_shadow_to=args.remove_shadow_to)
     cond.update(interp_cond)
         
     # Repeated non-spatial
@@ -325,143 +327,18 @@ if __name__ == '__main__':
     force_jpg_key = False
 
     # Load dataset
-    if args.dataset == 'itw':
-        cfg.dataset.root_path = f'/data/mint/DPM_Dataset/'
-        img_dataset_path = f"/data/mint/DPM_Dataset/ITW/itw_images_aligned/"
-        deca_dataset_path = f"/data/mint/DPM_Dataset/ITW/params/"
-        img_ext = '.png'
-        cfg.dataset.training_data = 'ITW'
-        cfg.dataset.data_dir = f'{cfg.dataset.root_path}/{cfg.dataset.training_data}/itw_images_aligned/'
-    elif args.dataset == 'holo':
-        cfg.dataset.root_path = f'/data/mint/DPM_Dataset/'
-        img_dataset_path = f"/data/mint/DPM_Dataset/HoloRelighting/images_aligned/"
-        deca_dataset_path = f"/data/mint/DPM_Dataset/HoloRelighting/params/"
-        img_ext = '.png'
-        cfg.dataset.training_data = 'HoloRelighting'
-        cfg.dataset.data_dir = f'{cfg.dataset.root_path}/{cfg.dataset.training_data}/images_aligned/'
-        cfg.dataset.face_segment_dir = f"{cfg.dataset.root_path}/{cfg.dataset.training_data}/face_segment_with_pupil/"
-    elif args.dataset == 'switch':
-        cfg.dataset.root_path = f'/data/mint/DPM_Dataset/'
-        img_dataset_path = f"/data/mint/DPM_Dataset/SwitchLight/images_aligned/"
-        deca_dataset_path = f"/data/mint/DPM_Dataset/SwitchLight/params/"
-        img_ext = '.png'
-        cfg.dataset.training_data = 'SwitchLight'
-        cfg.dataset.data_dir = f'{cfg.dataset.root_path}/{cfg.dataset.training_data}/images_aligned/'
-        cfg.dataset.face_segment_dir = f"{cfg.dataset.root_path}/{cfg.dataset.training_data}/face_segment_with_pupil/"
-    elif args.dataset == 'switch_lim':
-        cfg.dataset.root_path = f'/data/mint/DPM_Dataset/'
-        img_dataset_path = f"/data/mint/DPM_Dataset/SwitchLight_limitation/images_aligned/"
-        deca_dataset_path = f"/data/mint/DPM_Dataset/SwitchLight_limitation/params/"
-        img_ext = '.png'
-        cfg.dataset.training_data = 'SwitchLight_limitation'
-        cfg.dataset.data_dir = f'{cfg.dataset.root_path}/{cfg.dataset.training_data}/images_aligned/'
-        cfg.dataset.face_segment_dir = f"{cfg.dataset.root_path}/{cfg.dataset.training_data}/face_segment_with_pupil/"
-    elif args.dataset == 'hard_cs':
-        cfg.dataset.root_path = f'/data/mint/DPM_Dataset/'
-        img_dataset_path = f"/data/mint/DPM_Dataset/Hard_CS/images_aligned/"
-        deca_dataset_path = f"/data/mint/DPM_Dataset/Hard_CS/params/"
-        img_ext = '.png'
-        cfg.dataset.training_data = 'Hard_CS'
-        cfg.dataset.data_dir = f'{cfg.dataset.root_path}/{cfg.dataset.training_data}/images_aligned/'
-        cfg.dataset.face_segment_dir = f"{cfg.dataset.root_path}/{cfg.dataset.training_data}/face_segment_with_pupil/"
-    elif args.dataset == 'myset':
-        cfg.dataset.root_path = f'/data/mint/DPM_Dataset/'
-        img_dataset_path = f"/data/mint/DPM_Dataset/myset/images_aligned/"
-        deca_dataset_path = f"/data/mint/DPM_Dataset/myset/params/"
-        img_ext = '.png'
-        cfg.dataset.training_data = 'myset'
-        cfg.dataset.data_dir = f'{cfg.dataset.root_path}/{cfg.dataset.training_data}/images_aligned/'
-        cfg.dataset.face_segment_dir = f"{cfg.dataset.root_path}/{cfg.dataset.training_data}/face_segment_with_pupil/"
-        force_jpg_key = False
-    elif args.dataset == 'ffhq':
-        cfg.dataset.root_path = f'/data/mint/DPM_Dataset/'
-        deca_dataset_path = f"/data/mint/DPM_Dataset/ffhq_256_with_anno/params/"
-        img_ext = '.jpg'
-        cfg.dataset.training_data = 'ffhq_256_with_anno'
-        if os.path.exists(f'{cfg.dataset.root_path}/{cfg.dataset.training_data}/ffhq_256_no_aliasing/') and args.use_no_aliasing:
-            print("[#] Using no aliasing dataset...")
-            cfg.dataset.data_dir = f'{cfg.dataset.root_path}/{cfg.dataset.training_data}/ffhq_256_no_aliasing/'
-            img_dataset_path = f"/data/mint/DPM_Dataset/ffhq_256_with_anno/ffhq_256_no_aliasing/"
-        else:
-            cfg.dataset.data_dir = f'{cfg.dataset.root_path}/{cfg.dataset.training_data}/ffhq_256/'
-            img_dataset_path = f"/data/mint/DPM_Dataset/ffhq_256_with_anno/ffhq_256/"
-        cfg.dataset.face_segment_dir = f"{cfg.dataset.root_path}/{cfg.dataset.training_data}/face_segment_with_pupil/"
-    elif args.dataset == 'ffhq_png':
-        cfg.dataset.root_path = f'/data/mint/DPM_Dataset/'
-        deca_dataset_path = f"/data/mint/DPM_Dataset/ffhq_256_with_anno/params/"
-        img_ext = '.png'
-        cfg.dataset.training_data = 'ffhq_256_with_anno'
-        if os.path.exists(f'{cfg.dataset.root_path}/{cfg.dataset.training_data}/ffhq_256_no_aliasing_png/'):
-            print("[#] Using no aliasing dataset...")
-            cfg.dataset.data_dir = f'{cfg.dataset.root_path}/{cfg.dataset.training_data}/ffhq_256_no_aliasing_png/'
-            img_dataset_path = f"/data/mint/DPM_Dataset/ffhq_256_with_anno/ffhq_256_no_aliasing_png/"
-        else:
-            cfg.dataset.data_dir = f'{cfg.dataset.root_path}/{cfg.dataset.training_data}/ffhq_256/'
-            img_dataset_path = f"/data/mint/DPM_Dataset/ffhq_256_with_anno/ffhq_256/"
-        cfg.dataset.face_segment_dir = f"{cfg.dataset.root_path}/{cfg.dataset.training_data}/face_segment_with_pupil/"
-        force_jpg_key = True
-    elif args.dataset == 'ffhq_data2':
-        cfg.dataset.root_path = f'/data2/mint/DPM_Dataset/'
-        img_dataset_path = f"/data2/mint/DPM_Dataset/ffhq_256_with_anno/ffhq_256/"
-        deca_dataset_path = f"/data2/mint/DPM_Dataset/ffhq_256_with_anno/params/"
-        img_ext = '.jpg'
-        cfg.dataset.training_data = 'ffhq_256_with_anno'
-        cfg.dataset.data_dir = f'{cfg.dataset.root_path}/{cfg.dataset.training_data}/ffhq_256/'
-        cfg.dataset.face_segment_dir = f"{cfg.dataset.root_path}/{cfg.dataset.training_data}/face_segment_with_pupil/"
-    elif args.dataset == 'tr_samples':
-        cfg.dataset.root_path = f'/data/mint/DPM_Dataset/'
-        img_dataset_path = f"/data/mint/DPM_Dataset/TR_samples/aligned_images/"
-        deca_dataset_path = f"/data/mint/DPM_Dataset/TR_samples/params/"
-        img_ext = '.png'
-        cfg.dataset.training_data = 'TR_samples'
-        cfg.dataset.data_dir = f'{cfg.dataset.root_path}/{cfg.dataset.training_data}/aligned_images/'
-    elif args.dataset in ['mp_test', 'mp_test2', 'mp_valid', 'mp_valid2']:
-        if args.dataset == 'mp_test':
-            sub_f = '/MultiPIE_testset/'
-        elif args.dataset == 'mp_test2':
-            sub_f = '/MultiPIE_testset2/'
-        elif args.dataset == 'mp_valid':
-            sub_f = '/MultiPIE_validset/'
-        elif args.dataset == 'mp_valid2':
-            sub_f = '/MultiPIE_validset2/'
-        else: raise ValueError
-        img_dataset_path = f"/data/mint/DPM_Dataset/MultiPIE/{sub_f}/mp_aligned/"
-        deca_dataset_path = f"/data/mint/DPM_Dataset/MultiPIE/{sub_f}/params/"
-        img_ext = '.png'
-        cfg.dataset.training_data = f'/MultiPIE/{sub_f}/'
-        cfg.dataset.root_path = f'/data/mint/DPM_Dataset/'
-        cfg.dataset.data_dir = f'{cfg.dataset.root_path}/{cfg.dataset.training_data}/mp_aligned/'
-        cfg.dataset.face_segment_dir = f"{cfg.dataset.root_path}/{cfg.dataset.training_data}/face_segment_with_pupil/"
-    elif args.dataset in ['mp_test_data2', 'mp_test2_data2', 'mp_valid_data2', 'mp_valid2_data2']:
-        if args.dataset == 'mp_test_data2':
-            sub_f = '/MultiPIE_testset/'
-        elif args.dataset == 'mp_test2_data2':
-            sub_f = '/MultiPIE_testset2/'
-        elif args.dataset == 'mp_valid_data2':
-            sub_f = '/MultiPIE_validset/'
-        elif args.dataset == 'mp_valid2_data2':
-            sub_f = '/MultiPIE_validset2/'
-        else: raise ValueError
-        img_dataset_path = f"/data2/mint/DPM_Dataset/MultiPIE/{sub_f}/mp_aligned/"
-        deca_dataset_path = f"/data2/mint/DPM_Dataset/MultiPIE/{sub_f}/params/"
-        img_ext = '.png'
-        cfg.dataset.training_data = f'/MultiPIE/{sub_f}/'
-        cfg.dataset.root_path = f'/data2/mint/DPM_Dataset/'
-        cfg.dataset.data_dir = f'{cfg.dataset.root_path}/{cfg.dataset.training_data}/mp_aligned/'
-        cfg.dataset.face_segment_dir = f"{cfg.dataset.root_path}/{cfg.dataset.training_data}/face_segment_with_pupil/"
-    else: raise ValueError
+    cfg.dataset.root_path = f'{args.dataset_root}'
+    img_ext = '.png'
+    cfg.dataset.data_dir = f'{cfg.dataset.root_path}/images_aligned/'
+    cfg.dataset.deca_dir = f'{cfg.dataset.root_path}/params/'
 
-    cfg.dataset.deca_dir = f'{cfg.dataset.root_path}/{cfg.dataset.training_data}/params/'
-    # cfg.dataset.face_segment_dir = f"{cfg.dataset.root_path}/{cfg.dataset.training_data}/face_segment/"
-    cfg.dataset.deca_rendered_dir = f"{cfg.dataset.root_path}/{cfg.dataset.training_data}/rendered_images/"
-    cfg.dataset.laplacian_dir = f"{cfg.dataset.root_path}/{cfg.dataset.training_data}/laplacian/"
-    cfg.dataset.sobel_dir = f"{cfg.dataset.root_path}/{cfg.dataset.training_data}/sobel/"
-    cfg.dataset.shadow_mask_dir = f"{cfg.dataset.root_path}/{cfg.dataset.training_data}/shadow_masks/"
-    cfg.dataset.shadow_diff_dir = f"{cfg.dataset.shadow_diff_dir}/" if args.shadow_diff_dir is None else f"{args.shadow_diff_dir}/"
+    cfg.dataset.face_segment_dir = f"{cfg.dataset.root_path}/face_segment_with_pupil/"
+    cfg.dataset.deca_rendered_dir = f"{cfg.dataset.root_path}/rendered_images/"
+    cfg.dataset.shadow_diff_dir = f"{cfg.dataset.root_path}/shadow_diff_SS_with_c_simplified/" if args.shadow_diff_dir is None else f"{args.shadow_diff_dir}/"
 
     loader, dataset, avg_dict = load_data_img_deca(
-        data_dir=img_dataset_path,
-        deca_dir=deca_dataset_path,
+        data_dir=cfg.dataset.data_dir,
+        deca_dir=cfg.dataset.deca_dir,
         batch_size=int(1e5),
         image_size=cfg.img_model.image_size,
         deterministic=cfg.train.deterministic,
@@ -477,7 +354,7 @@ if __name__ == '__main__':
         mode='sampling'
     )
     data_size = dataset.__len__()
-    img_path = file_utils._list_image_files_recursively(f"{img_dataset_path}/{args.set}", force_jpg_key=force_jpg_key)
+    img_path = file_utils._list_image_files_recursively(f"{cfg.dataset.data_dir}/{args.set}", force_jpg_key=force_jpg_key)
     all_img_idx, all_img_name, n_subject = mani_utils.get_samples_list(args.sample_pair_json, 
                                                                             args.sample_pair_mode, 
                                                                             args.src_dst, img_path, 
@@ -554,15 +431,17 @@ if __name__ == '__main__':
         runtime_dict['sub_load_deca_time'].append(time_dict['load_deca_time'])
         
         #NOTE: Save result
-        out_dir_relit = f"{args.out_dir}/log={args.log_dir}_cfg={args.cfg_name}{args.postfix}/{args.ckpt_selector}_{args.step}/{args.set}/{itp_str}/reverse_sampling/"
+        # out_dir_relit = f"{args.out_dir}/log={args.log_dir}_cfg={args.cfg_name}{args.postfix}/{args.ckpt_selector}_{args.step}/{args.set}/{itp_str}/reverse_sampling/"
+        out_dir_relit = f"{args.out_dir}/cfg={args.cfg_name}{args.postfix}/{args.set}/{itp_str}"
         os.makedirs(out_dir_relit, exist_ok=True)
         save_res_dir = f"{out_dir_relit}/src={src_id}/dst={dst_id}/{itp_fn_str}_{args.diffusion_steps}/n_frames={n_step}/"
         os.makedirs(save_res_dir, exist_ok=True)
 
 
-        if misc_dict['render_ld'] is not None and args.use_sh_to_ld_region:
-            misc_dict['render_ld'] = misc_dict['render_ld'].permute(0, 3, 1, 2)
-            vis_utils.save_images(path=f"{save_res_dir}", fn="render_ld", frames=misc_dict['render_ld']/255.)
+        if misc_dict is not None: 
+            if misc_dict['render_ld'] is not None and args.use_sh_to_ld_region:
+                misc_dict['render_ld'] = misc_dict['render_ld'].permute(0, 3, 1, 2)
+                vis_utils.save_images(path=f"{save_res_dir}", fn="render_ld", frames=misc_dict['render_ld']/255.)
         
         f_relit = vis_utils.convert2rgb(out_relit, cfg.img_model.input_bound) / 255.0
         vis_utils.save_images(path=f"{save_res_dir}", fn="res", frames=f_relit)

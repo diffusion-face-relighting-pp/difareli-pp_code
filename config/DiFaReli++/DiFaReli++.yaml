@@ -47,5 +47,5 @@ dataset:
 
 
 train_misc:
-  exp_name: "TPAMI_main_results"
-  cfg_name: "paired+difareli+cs+nodpm+trainset_256"
+  exp_name: "Released"
+  cfg_name: "DiFaReli++"

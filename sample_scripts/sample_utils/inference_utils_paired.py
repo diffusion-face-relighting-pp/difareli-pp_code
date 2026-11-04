@@ -831,7 +831,6 @@ def build_condition_image(cond, misc, force_render=False):
             print(f"[#] Scaling the SH with {args.scale_sh} on [1:n_step] (target light)...")
             cond['light'][1:] = cond['light'][1:] * args.scale_sh
             
-            
     # Handling the render face
     if np.any(['deca' in i for i in condition_img]) or force_render:
         start_t = time.time()
@@ -858,6 +857,7 @@ def build_condition_image(cond, misc, force_render=False):
             end = sub_step[i+1]
             sub_cond = cond.copy()
             sub_cond['light'] = sub_cond['light'][start:end, :]
+            print(sub_cond['light'])
             # Deca rendered : B x 3 x H x W
             start_sub_render_deca_t = time.time()
             deca_rendered, orig_visdict = params_utils.render_deca(deca_params=sub_cond, 

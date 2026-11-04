@@ -36,14 +36,14 @@ class CkptLoader():
     # Config file
     def get_cfg(self):
         import os
-        if os.path.exists(f"/home/mint/Dev/DiFaReli/difareli-faster/config/"):
+        if os.path.exists(f"/home/mint/Dev/DiFaReli++/released/difareli-pp_code/config/"):
+            cfg_file_path = glob.glob("/home/mint/Dev/DiFaReli++/released/difareli-pp_code/config/**", recursive=True)
+        elif os.path.exists(f"/home/mint/Dev/DiFaReli/difareli-faster/config/"):
             cfg_file_path = glob.glob("/home/mint/Dev/DiFaReli/difareli-faster/config/**", recursive=True)
         elif os.path.exists(f"/home2/mint/Dev/DiFaReli/difareli-faster/config/"):
             cfg_file_path = glob.glob("/home2/mint/Dev/DiFaReli/difareli-faster/config/**", recursive=True)
         elif os.path.exists(f"/home/mint/Dev/DiFaReli++/difareli_pp/config/"):
             cfg_file_path = glob.glob("/home/mint/Dev/DiFaReli++/difareli_pp/config/**", recursive=True)
-        elif os.path.exists(f"/home/mint/Dev/DiFaReli++/released/difareli-pp_code/config/"):
-            cfg_file_path = glob.glob("/home/mint/Dev/DiFaReli++/released/difareli-pp_code/config/**", recursive=True)
         cfg_file_path = [cfg_path for cfg_path in cfg_file_path if f"/{self.cfg_name}" in cfg_path]    # Add /{}/ to achieve a case-sensitive of folder
         print("[#] Config Path : ", cfg_file_path)
         assert len(cfg_file_path) <= 1
@@ -54,6 +54,11 @@ class CkptLoader():
 
     # Log & Checkpoint file 
     def get_model_path(self,):
+        if os.path.exists(self.log_dir):
+            return self.log_dir
+        else:
+            raise FileNotFoundError(f"[#] Please check the model path at {self.log_dir}")
+
         # model_logs_path = glob.glob(f"{self.sshfs_mount_path}/*/*/", recursive=True) + glob.glob(f"{self.sshfs_path}/*/", recursive=True)
         # model_logs_path = glob.glob(f"{self.sshfs_mount_path}/*/*/*/", recursive=True) + glob.glob(f"{self.sshfs_path}/*/", recursive=True) + glob.glob(f"{self.sshfs_path}/*/*/", recursive=True) + glob.glob(f"{self.sshfs_path}/*/*/*/", recursive=True) + glob.glob(f"{self.sshfs_mount_path}/*/*/", recursive=True) + glob.glob(f"{self.sshfs_mount_path}/*/*/*/*/", recursive=True)
         model_logs_path = glob.glob(f"{self.sshfs_mount_path}/*/", recursive=True) + glob.glob(f"{self.sshfs_path}/*/", recursive=True)

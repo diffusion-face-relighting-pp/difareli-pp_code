@@ -67,6 +67,7 @@ parser.add_argument('--fixed_render', action='store_true', default=False)
 parser.add_argument('--fixed_shadow', action='store_true', default=False)
 parser.add_argument('--use_sh_to_ld_region', action='store_true', default=False)
 parser.add_argument('--rt_regionG_scale', type=float, default=0.03)
+parser.add_argument('--adjust_contrast', nargs=2, type=float, default=None)
 # Experiment - Shadow weight
 parser.add_argument('--shadow_diff_inc_c', action='store_true', default=False)
 parser.add_argument('--shadow_diff_dec_c', action='store_true', default=False)
@@ -326,6 +327,15 @@ if __name__ == '__main__':
         img_ext = '.png'
         cfg.dataset.training_data = 'ITW'
         cfg.dataset.data_dir = f'{cfg.dataset.root_path}/{cfg.dataset.training_data}/itw_images_aligned/'
+    elif args.dataset == 'myset':
+        cfg.dataset.root_path = f'/data/mint/DPM_Dataset/'
+        img_dataset_path = f"/data/mint/DPM_Dataset/myset/images_aligned/"
+        deca_dataset_path = f"/data/mint/DPM_Dataset/myset/params/"
+        img_ext = '.png'
+        cfg.dataset.training_data = 'myset'
+        cfg.dataset.data_dir = f'{cfg.dataset.root_path}/{cfg.dataset.training_data}/images_aligned/'
+        cfg.dataset.face_segment_dir = f"{cfg.dataset.root_path}/{cfg.dataset.training_data}/face_segment_with_pupil/"
+        force_jpg_key = False
     elif args.dataset == 'holo':
         cfg.dataset.root_path = f'/data/mint/DPM_Dataset/'
         img_dataset_path = f"/data/mint/DPM_Dataset/HoloRelighting/images_aligned/"
