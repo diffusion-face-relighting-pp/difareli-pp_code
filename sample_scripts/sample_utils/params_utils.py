@@ -579,11 +579,12 @@ def render_shadow_mask_with_smooth_hdr(sh_light, cam, verts, deca, rt_dict, use_
 
     return th.cat(out_shadow_mask), th.cat(out_kk), th.cat(out_sph_ld) if image_sph_ld is not None else None
 
-def render_shadow_mask_with_smooth(sh_light, cam, verts, deca, rt_dict, use_sh_to_ld_region=True, axis_0=False, axis_1=False, up_rate=1, device='cuda', org_h=128, org_w=128):
+def render_shadow_mask_with_smooth(sh_light, cam, verts, deca, rt_dict, axis_0=False, axis_1=False, up_rate=1, device='cuda', org_h=256, org_w=256):
     print("[#] Rendering shadow mask with smooth (pertubation version)...")
-    sys.path.insert(0, '/home/mint/guided-diffusion/sample_scripts/cond_utils/DECA/')
-    sys.path.append('/home/mint/Dev/DiFaReli/difareli-faster/sample_scripts/cond_utils/DECA/')
-    sys.path.append('/home2/mint/Dev/DiFaReli/difareli-faster/sample_scripts/cond_utils/DECA/')
+    # sys.path.insert(0, '/home/mint/guided-diffusion/sample_scripts/cond_utils/DECA/')
+    # sys.path.append('/home/mint/Dev/DiFaReli/difareli-faster/sample_scripts/cond_utils/DECA/')
+    # sys.path.append('/home2/mint/Dev/DiFaReli/difareli-faster/sample_scripts/cond_utils/DECA/')
+    sys.path.append('../cond_utils/DECA/')
     from decalib.utils import util
     from torchvision.transforms import GaussianBlur
     import cv2, tqdm
@@ -595,8 +596,6 @@ def render_shadow_mask_with_smooth(sh_light, cam, verts, deca, rt_dict, use_sh_t
         assert all(tmp)
 
     verts = verts[0:1, ...].cuda()  # Save memory by rendering only 1st image
-    # depth_image_f, _ = deca['face'].render.render_depth(verts, up_rate=up_rate)   # Depth : B x 1 x H x W
-    # depth_image_fe, _ = deca['face_eyes'].render.render_depth(verts, up_rate=up_rate)   # Depth : B x 1 x H x W
     depth_image_fs, _ = deca['face_scalp'].render.render_depth(verts, up_rate=up_rate)   # Depth : B x 1 x H x W
     B, C, h, w = depth_image_fs.shape
 
@@ -605,8 +604,6 @@ def render_shadow_mask_with_smooth(sh_light, cam, verts, deca, rt_dict, use_sh_t
 
     orig = depth_image_fs.detach().clone()# * mask_eyes  # Remove depth of eyes out
     mask_face = orig != 0
-    # mask_eyes = (depth_image_f!=0) + (depth_image_fe==0)
-    # mask_face = ((depth_image_f != 0) + (depth_image_fe == 0)) * (depth_image_fs != 0)
     mask_face = mask_face.float()
 
     blurred_orig = GaussianBlur(kernel_size=13, sigma=2.0)(orig)#.cpu().numpy()
@@ -618,13 +615,10 @@ def render_shadow_mask_with_smooth(sh_light, cam, verts, deca, rt_dict, use_sh_t
 
     blurred_orig = blurred_orig * (mask_face)
 
-    # depth_image_smooth = blurred_orig * 100
-    print(f"[#] Scale depth with {rt_dict['scale_depth']}...")
     depth_image_smooth = blurred_orig * rt_dict['scale_depth']
 
     depth_grid = np.concatenate((depth_grid, depth_image_smooth.permute(0, 2, 3, 1)[..., 0:1].cpu().numpy()), axis=-1) # B x H x W x 3
 
-    # depth_grid[..., 2] *= (256 * up_rate)
     depth_grid = th.tensor(depth_grid).to(device)   # B x H x W x 3; B should be 1
     assert depth_grid.shape[0] == 1
     depth_grid = depth_grid.squeeze(0)
@@ -632,22 +626,12 @@ def render_shadow_mask_with_smooth(sh_light, cam, verts, deca, rt_dict, use_sh_t
     out_shadow_mask = []
     out_kk = []
     out_sph_ld = []
-    rt_scale = rt_dict['rt_regionG_scale']
-    if use_sh_to_ld_region:
-        print(f"[#] Approximate the light direction from brightest spot with rt_scale={rt_scale}...")
-    else:
-        print(f"[#] Approximate the light direction from the mean of SH coffecients [2nd, 3rd and 4th] ...")
     for i in tqdm.tqdm(range(sh_light.shape[0]), position=0, desc="Rendering Shadow Mask on each Sh..."):
         #NOTE: Render the shadow mask from light direction
 
         shadow_mask = th.clone((depth_image_fs.permute(0, 2, 3, 1)[:, :, :, 0])).to(device)
-        if use_sh_to_ld_region:
-            ld, misc_dat = sh_to_ld_brightest_region_G(sh=th.tensor(sh_light[[i]]), scale=rt_scale)  # Output shape = (1, 3)
-            image_sph_ld = misc_dat[-1]
-            ld[:, 2] *= -1
-        else:
-            ld = sh_to_ld(sh=th.tensor(sh_light[[i]]))  # Output shape = (1, 3)
-            image_sph_ld = None
+        ld = sh_to_ld(sh=th.tensor(sh_light[[i]]))  # Output shape = (1, 3)
+        image_sph_ld = None
         ld = util.batch_orth_proj(ld[None, ...].cuda(), cam[None, ...].cuda());     # This fn takes pts=Bx3, cam=Bx3
         ld[:, :, 1:] = -ld[:, :, 1:]
         ray = ld.view(3).to(device)

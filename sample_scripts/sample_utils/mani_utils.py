@@ -331,7 +331,6 @@ def diffuse_sh(cond, src_idx, n_step, interpolate=False):
         print("[#] Using diffuse SH...")
         interp = [diffuse_sh] * n
         out_sh = np.stack(interp, 0)    # [n_step, 27]
-        print(out_sh)
     
     return {'light':out_sh}
     

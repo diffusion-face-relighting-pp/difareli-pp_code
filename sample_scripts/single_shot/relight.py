@@ -67,18 +67,10 @@ parser.add_argument('--force_zero_src_shadow', action='store_true', default=Fals
 parser.add_argument('--shadow_diff_dir', type=str, default=None)
 parser.add_argument('--fixed_render', action='store_true', default=False)
 parser.add_argument('--fixed_shadow', action='store_true', default=False)
-parser.add_argument('--use_sh_to_ld_region', action='store_true', default=False)
-parser.add_argument('--rt_regionG_scale', type=float, default=0.03)
 parser.add_argument('--adjust_contrast', nargs=2, type=float, default=None)
 # Experiment - Shadow weight
 parser.add_argument('--shadow_diff_inc_c', action='store_true', default=False)
 parser.add_argument('--shadow_diff_dec_c', action='store_true', default=False)
-parser.add_argument('--shadow_diff_blurmap', action='store_true', default=False)
-parser.add_argument('--blurmap_reshadow_const_c', type=float, default=None)
-parser.add_argument('--blurmap_reshadow_dec_c_with_given_c', type=float, default=None)
-parser.add_argument('--blurmap_reshadow_inc_c_with_given_c', type=float, default=None)
-parser.add_argument('--blurmap_source', action='store_true', default=False)
-parser.add_argument('--blurmap_each', action='store_true', default=False)
 parser.add_argument('--shadow_diff_fidx_frac', type=float, default=0.0)    # set to 0.0 for using first frame
 parser.add_argument('--same_shadow_as_sd', action='store_true', default=False)
 parser.add_argument('--relight_with_strongest_c', action='store_true', default=False)
@@ -142,9 +134,9 @@ from sample_utils import (
     params_utils, 
     vis_utils, 
     file_utils, 
-    inference_utils_paired, 
     mani_utils,
 )
+from sample_utils import inference_utils_ss as inference_utils
 device = 'cuda' if th.cuda.is_available() and th._C._cuda_getDeviceCount() > 0 else 'cpu'
 
 def make_condition(cond, src_idx, dst_idx, n_step=2, itp_func=None):
@@ -178,18 +170,14 @@ def make_condition(cond, src_idx, dst_idx, n_step=2, itp_func=None):
                 cond[f'{k}_mask'] = th.stack([cond[f'{k}_mask'][src_idx]] * n_step, dim=0)
         
     # Create the render the image
-    cond, _, misc = inference_utils_paired.build_condition_image(cond=cond, misc=misc, force_render=args.force_render)
+    cond, _, misc = inference_utils.build_condition_image(cond=cond, misc=misc, force_render=args.force_render)
     misc_tmp = copy.deepcopy(misc)
     for i, j in enumerate(misc['cfg']['img_cond_model']['sj_paired']):
         misc_tmp['condition_img'][i] = f"{j}_{misc_tmp['condition_img'][i]}"
     
-    cond, shadow_weight = inference_utils_paired.shadow_diff_with_weight_postproc(cond=cond, misc=misc_tmp)
-    cond, misc = inference_utils_paired.shadow_diff_final_postproc(cond=cond, misc=misc)
-    if args.shadow_diff_blurmap:
-        cond, misc = inference_utils_paired.blur_map(cond=cond, misc=misc)
+    cond, shadow_weight = inference_utils.shadow_diff_with_weight_postproc(cond=cond, misc=misc_tmp)
     n_step = misc['n_step']
-    # Return the ['cond_img'] and ['dpm_cond_img']
-    cond.update(inference_utils_paired.prepare_cond_sampling(cond=cond, cfg=cfg, use_render_itp=True))
+    cond.update(inference_utils.prepare_cond_sampling(cond=cond, cfg=cfg, use_render_itp=True))
     
     cond['cfg'] = cfg
     cond['use_cond_xt_fn'] = False
@@ -230,7 +218,7 @@ def make_condition(cond, src_idx, dst_idx, n_step=2, itp_func=None):
         to_tensor_key = ['cond_params'] + cfg.param_model.params_selector + [cfg.img_cond_model.override_cond]
     else:    
         to_tensor_key = ['cond_params'] + cfg.param_model.params_selector
-    cond = inference_utils_paired.to_tensor(cond, key=to_tensor_key, device=ckpt_loader.device)
+    cond = inference_utils.to_tensor(cond, key=to_tensor_key, device=ckpt_loader.device)
     
     # print(cond['cond_params'])
     # print(cond['cond_params'].shape)
@@ -303,7 +291,7 @@ def relight(dat, model_kwargs, itp_func, n_step=3, src_idx=0, dst_idx=1):
                 }
     
     if ('render_face' in args.itp) or args.force_render:
-        return relit_out, cond['cond_img'], out_timing, {'render_ld':cond['render_ld']}
+        return relit_out, cond['cond_img'], out_timing, None
     else:
         return relit_out, None, out_timing, None
 
@@ -323,7 +311,7 @@ if __name__ == '__main__':
     print(f"[#] Sampling with diffusion_steps = {args.diffusion_steps}")
     cfg.diffusion.diffusion_steps = args.diffusion_steps
     model_dict, diffusion = ckpt_loader.load_model(ckpt_selector=args.ckpt_selector, step=args.step)
-    model_dict = inference_utils_paired.eval_mode(model_dict)
+    model_dict = inference_utils.eval_mode(model_dict)
     force_jpg_key = False
 
     # Load dataset
@@ -393,21 +381,13 @@ if __name__ == '__main__':
         n_step = args.itp_step
         print(f"[#] Current idx = {i}, Set = {args.set}, Src-id = {src_id}, Dst-id = {dst_id}")
         
-        pl_sampling = inference_utils_paired.PLSampling(model_dict=model_dict,
-                                                    diffusion=diffusion,
-                                                    reverse_fn=diffusion.ddim_reverse_sample_loop,
-                                                    forward_fn=diffusion.ddim_sample_loop,
+        pl_sampling = inference_utils.PLSampling(model_dict=model_dict,
                                                     denoised_fn=None,
                                                     cfg=cfg,
                                                     args=args)
         
-        # model_kwargs = inference_utils_paired.prepare_cond_sampling_paired(cond=model_kwargs, cfg=cfg)
         model_kwargs['cfg'] = cfg
         model_kwargs['use_cond_xt_fn'] = False
-        if (cfg.img_model.apply_dpm_cond_img) and (np.any(n is not None for n in cfg.img_model.noise_dpm_cond_img)):
-            model_kwargs['use_cond_xt_fn'] = True
-            for k, p in zip(cfg.img_model.dpm_cond_img, cfg.img_model.noise_dpm_cond_img):
-                model_kwargs[f'{k}_img'] = model_kwargs[f'{k}_img'].to(device)
            
         itp_fn = mani_utils.slerp if args.slerp else mani_utils.lerp
         itp_fn_str = 'Slerp' if itp_fn == mani_utils.slerp else 'Lerp'
@@ -438,11 +418,6 @@ if __name__ == '__main__':
         os.makedirs(save_res_dir, exist_ok=True)
 
 
-        if misc_dict is not None: 
-            if misc_dict['render_ld'] is not None and args.use_sh_to_ld_region:
-                misc_dict['render_ld'] = misc_dict['render_ld'].permute(0, 3, 1, 2)
-                vis_utils.save_images(path=f"{save_res_dir}", fn="render_ld", frames=misc_dict['render_ld']/255.)
-        
         f_relit = vis_utils.convert2rgb(out_relit, cfg.img_model.input_bound) / 255.0
         vis_utils.save_images(path=f"{save_res_dir}", fn="res", frames=f_relit)
         

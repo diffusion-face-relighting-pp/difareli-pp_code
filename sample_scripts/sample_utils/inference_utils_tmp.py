@@ -412,43 +412,13 @@ def build_condition_image_hdr(cond, misc, force_render=False):
         # Render the face
         if 'render_face' in args.interpolate:
             #NOTE: Render w/ interpolated light (Mainly use this)
-            if args.spiral_sh:
-                print("[#] Spiral SH mode of src light...")
-                old_n_step = n_step
-                interp_cond, new_n_step = mani_utils.spiral_sh(cond, src_idx=src_idx, n_step=n_step, light_traj_path=args.light_traj_path)
-                n_step = new_n_step
-                misc['n_step'] = n_step # Revoking n_step
-                print(f"[#] Revoking the n_step: {old_n_step} -> {n_step}")
-            elif args.fancy_rotate_sh:
-                print("[#] Fancy Rotate SH mode of src light...")
-                old_n_step = n_step
-                interp_cond, new_n_step = mani_utils.fancy_rotate_sh(cond, src_idx=src_idx)
-                n_step = new_n_step
-                misc['n_step'] = n_step # Revoking n_step
-                print(f"[#] Revoking the n_step: {old_n_step} -> {n_step}")
-            elif args.rotate_sh:
+            if args.rotate_sh:
                 print("[#] Rotate SH mode of src light...")
                 interp_cond = mani_utils.rotate_sh(cond, src_idx=src_idx, n_step=n_step, axis=args.rotate_sh_axis)
             elif args.force_diffuse_sh:
                 print("[#] Diffuse SH mode of src light...")
                 interp_cond = mani_utils.diffuse_sh(cond, src_idx=src_idx, n_step=n_step, interpolate=args.itp_diffuse_sh)
                 interp_cond['light'][0:1] = cond['light'][src_idx]  # Always keep the first frame as src light
-            elif args.rotate_sh_dst:
-                print("[#] Rotate SH mode of dst light...")
-                interp_cond = mani_utils.rotate_sh(cond, src_idx=dst_idx, n_step=n_step, axis=args.rotate_sh_axis)
-                interp_cond['light'][0:1] = cond['light'][src_idx]  # Always keep the first frame as src light
-            elif args.sh_file is not None:
-                print("[#] Load SH mode from file: ", args.sh_file)
-                sh_from_file = np.load(args.sh_file, allow_pickle=True) # B x 9 x 3
-                interp_cond = {'light':sh_from_file.reshape(-1, 27)}    # B x 27
-                if args.rotate_sh_file:
-                    print("[#] Rotate SH (from file)...")
-                    interp_cond = mani_utils.rotate_sh(interp_cond, src_idx=0, n_step=n_step, axis=args.rotate_sh_axis)
-                # Apply rotate_sh_axis
-                interp_cond['light'][0:1] = cond['light'][src_idx]  # Always keep the first frame as src light
-            elif args.same_sh:
-                print("[#] Same SH mode of src light...")
-                interp_cond = {'light':cond['light'][src_idx].repeat(n_step, 1)}
             else:
                 print("[#] Interpolating SH mode from src->dst light...")
                 interp_cond = mani_utils.iter_interp_cond(cond, interp_set=['light'], src_idx=src_idx, dst_idx=dst_idx, n_step=n_step, interp_fn=itp_func)
@@ -462,7 +432,6 @@ def build_condition_image_hdr(cond, misc, force_render=False):
             #NOTE: Render w/ same light
             repeated_cond = mani_utils.repeat_cond_params(cond, base_idx=src_idx, n=n_step, key=['light'])
             cond.update(repeated_cond)
-        
         
         if args.scale_sh:
             print(f"[#] Scaling the SH with {args.scale_sh} on [1:n_step] (target light)...")
@@ -741,32 +710,19 @@ def build_condition_image(cond, misc, force_render=False):
         for j in range(n_step):
             sd_tmp = shadow_mask[j]
             sdkk_tmp = shadow_kk[j]
-            if args.postproc_shadow_mask_smooth_keep_shadow_shading:
-                #NOTE: Keep the shadow shading from perturbed light
-                m_glasses_and_eyes = cond[f'{cond_img_name}_meg_mask'][src_idx].cpu().numpy()
-                # Masking out the bg area
-                m_face_parsing = cond[f'{cond_img_name}_mface_mask'][src_idx].cpu().numpy()
-                m_face = m_face_parsing
 
-                sd_tmp_proc = ((1 - sd_tmp)) * (m_face * (1-m_glasses_and_eyes)) * ((1 - sdkk_tmp) > 0)
-                sd_tmp = sd_tmp_proc
-
-            elif args.postproc_shadow_mask_smooth:
-                #NOTE: Do not keep the shading of shadows from perturbed light
-                m_glasses_and_eyes = cond[f'{cond_img_name}_meg_mask'][src_idx].cpu().numpy()
-                # Masking out the bg area
-                m_face_parsing = cond[f'{cond_img_name}_mface_mask'][src_idx].cpu().numpy()
-                m_face = m_face_parsing
-                
-                sd_tmp_proc = (((1 - sd_tmp) > 0) * 1.0) * (m_face * (1-m_glasses_and_eyes)) * ((1 - sdkk_tmp) > 0.0)
-                sd_tmp = sd_tmp_proc
+            m_glasses_and_eyes = cond[f'{cond_img_name}_meg_mask'][src_idx].cpu().numpy()
+            m_face_parsing = cond[f'{cond_img_name}_mface_mask'][src_idx].cpu().numpy()
+            m_face = m_face_parsing
+            
+            sd_tmp_proc = (((1 - sd_tmp) > 0) * 1.0) * (m_face * (1-m_glasses_and_eyes)) * ((1 - sdkk_tmp) > 0.0)
+            sd_tmp = sd_tmp_proc
 
             shadow_diff_tmp.append(sd_tmp)
             
         shadow_diff_tmp = np.stack(shadow_diff_tmp, axis=0)
         cond[cond_img_name] = th.tensor(shadow_diff_tmp).cuda()
         
-        # if args.inverse_with_shadow_diff:
         print("[#] Setting frame-0th with shadow_diff (Replacing frame-0th)...")
         shadow_diff_tmp[0] = cond['shadow_diff_img'][src_idx]
         cond[f'src_{cond_img_name}'] = th.tensor(shadow_diff_tmp[[0]]).cuda()
@@ -776,44 +732,13 @@ def build_condition_image(cond, misc, force_render=False):
     # Handling the render face
     if np.any(['deca' in i for i in condition_img]) or np.any(['shadow_mask' in i for i in condition_img]) or np.any(['shadow_diff' in i for i in condition_img]):
         # Render the face
-        if args.sh_grid_size is not None:
-            #NOTE: Render w/ grid light 
-            cond['light'] = params_utils.grid_sh(sh=cond['light'][src_idx], n_grid=args.sh_grid_size, sx=args.sh_span_x, sy=args.sh_span_y, sh_scale=args.sh_scale, use_sh=args.use_sh).reshape(-1, 27)
-        elif 'render_face' in args.interpolate:
-            #NOTE: Render w/ interpolated light (Mainly use this)
-            if args.spiral_sh:
-                print("[#] Spiral SH mode of src light...")
-                old_n_step = n_step
-                interp_cond, new_n_step = mani_utils.spiral_sh(cond, src_idx=src_idx, n_step=n_step, light_traj_path=args.light_traj_path)
-                n_step = new_n_step
-                misc['n_step'] = n_step # Revoking n_step
-                print(f"[#] Revoking the n_step: {old_n_step} -> {n_step}")
-            elif args.fancy_rotate_sh:
-                print("[#] Fancy Rotate SH mode of src light...")
-                old_n_step = n_step
-                interp_cond, new_n_step = mani_utils.fancy_rotate_sh(cond, src_idx=src_idx)
-                n_step = new_n_step
-                misc['n_step'] = n_step # Revoking n_step
-                print(f"[#] Revoking the n_step: {old_n_step} -> {n_step}")
-            elif args.rotate_sh:
+        if 'render_face' in args.interpolate:
+            if args.rotate_sh:
                 print("[#] Rotate SH mode of src light...")
                 interp_cond = mani_utils.rotate_sh(cond, src_idx=src_idx, n_step=n_step, axis=args.rotate_sh_axis)
             elif args.force_diffuse_sh:
                 print("[#] Diffuse SH mode of src light...")
                 interp_cond = mani_utils.diffuse_sh(cond, src_idx=src_idx, n_step=n_step, interpolate=args.itp_diffuse_sh)
-                interp_cond['light'][0:1] = cond['light'][src_idx]  # Always keep the first frame as src light
-            elif args.rotate_sh_dst:
-                print("[#] Rotate SH mode of dst light...")
-                interp_cond = mani_utils.rotate_sh(cond, src_idx=dst_idx, n_step=n_step, axis=args.rotate_sh_axis)
-                interp_cond['light'][0:1] = cond['light'][src_idx]  # Always keep the first frame as src light
-            elif args.sh_file is not None:
-                print("[#] Load SH mode from file: ", args.sh_file)
-                sh_from_file = np.load(args.sh_file, allow_pickle=True) # B x 9 x 3
-                interp_cond = {'light':sh_from_file.reshape(-1, 27)}    # B x 27
-                if args.rotate_sh_file:
-                    print("[#] Rotate SH (from file)...")
-                    interp_cond = mani_utils.rotate_sh(interp_cond, src_idx=0, n_step=n_step, axis=args.rotate_sh_axis)
-                # Apply rotate_sh_axis
                 interp_cond['light'][0:1] = cond['light'][src_idx]  # Always keep the first frame as src light
             elif args.same_sh:
                 print("[#] Same SH mode of src light...")
@@ -827,12 +752,6 @@ def build_condition_image(cond, misc, force_render=False):
             repeated_cond = mani_utils.repeat_cond_params(cond, base_idx=src_idx, n=n_step, key=['light'])
             cond.update(repeated_cond)
             
-        if args.scale_sh:
-            print(f"[#] Scaling the SH with {args.scale_sh} on [1:n_step] (target light)...")
-            cond['light'][1:] = cond['light'][1:] * args.scale_sh
-            
-    # Handling the render face
-    if np.any(['deca' in i for i in condition_img]) or force_render:
         start_t = time.time()
         if np.any(['deca_masked' in n for n in condition_img]) or force_render:
             mask = params_utils.load_flame_mask()
@@ -868,11 +787,7 @@ def build_condition_image(cond, misc, force_render=False):
                                                                 mask=mask,
                                                                 deca_obj=deca_obj,
                                                                 repeat=True)
-            # print(orig_visdict.keys())
-            # print(orig_visdict['alpha_images'].shape)
-            # from vis_utils import plot_image
-            # plot_image(orig_visdict['alpha_images'], [1], "0to1", "test_alpha.png")
-            # exit()
+
             deca_alpha_images = orig_visdict['alpha_images']  # [B, 1, H, W]
             sub_render_deca_t = time.time() - start_sub_render_deca_t
             print("[#] Rendering with the shadow mask from face + scalp of render face...")
@@ -881,22 +796,16 @@ def build_condition_image(cond, misc, force_render=False):
                 flame_face_scalp = params_utils.load_flame_mask(['face', 'scalp', 'left_eyeball', 'right_eyeball'])
                 deca_obj_face_scalp = params_utils.init_deca(mask=flame_face_scalp, rasterize_type=args.rasterize_type) # Init DECA with mask only once
                 load_deca_for_shadow_time = time.time() - load_deca_for_shadow_time
-            if args.rotate_sh_axis == 0 and (args.rotate_sh or args.rotate_sh_dst):
-                print("[#] Fixing the axis 0 by negate ray[0]...")
-            elif args.rotate_sh_axis == 1 and (args.rotate_sh or args.rotate_sh_dst):
-                print("[#] Fixing the axis 1 by negate ray[1]...")
             
             start_sub_render_shadow_t = time.time()
             shadow_mask, shadow_kk, render_ld = params_utils.render_shadow_mask_with_smooth(
                                             sh_light=sub_cond['light'], 
                                             cam=sub_cond['cam'][src_idx],
                                             verts=orig_visdict['trans_verts_orig'], 
-                                            use_sh_to_ld_region=args.use_sh_to_ld_region,
                                             deca={'face_scalp':deca_obj_face_scalp}, 
                                             axis_0=args.rotate_sh_axis==0 and (args.rotate_sh or args.rotate_sh_dst),
                                             axis_1=args.rotate_sh_axis==1 and (args.rotate_sh or args.rotate_sh_dst),
                                             device='cpu',   # Prevent OOM
-                                            up_rate=args.up_rate_for_AA,
                                             org_h=img_size, org_w=img_size,
                                             rt_dict={'pt_round':args.pt_round, 'pt_radius':args.pt_radius, 'rt_regionG_scale':args.rt_regionG_scale, 'scale_depth':args.scale_depth}
                                         )
@@ -914,13 +823,6 @@ def build_condition_image(cond, misc, force_render=False):
             all_render_ld.append(render_ld)
             
         
-        if args.use_sh_to_ld_region:
-            all_render_ld = th.cat(all_render_ld, dim=0)
-            cond['render_ld'] = all_render_ld
-        else:
-            all_render_ld = None
-            cond['render_ld'] = None
-
         render_time = np.mean(render_time) + load_deca_time
         cond['render_time'] = render_time
         cond['pure_render_deca_time'] = pure_render_deca_time
@@ -929,7 +831,7 @@ def build_condition_image(cond, misc, force_render=False):
         cond['load_deca_for_shadow_time'] = load_deca_for_shadow_time
         print("Rendering time : ", time.time() - start_t)
         
-        if args.fixed_render and (args.shadow_diff_inc_c or args.shadow_diff_dec_c or args.shadow_diff_blurmap):
+        if args.fixed_render and (args.shadow_diff_inc_c or args.shadow_diff_dec_c):
             print("[#] Fixed the Deca renderer for Reshadowing...")
             print(all_render[0].shape) # List of  [B x 3 x H x W, ...]
             ff = all_render[0][0:1]
@@ -1259,22 +1161,6 @@ def shadow_diff_with_weight_postproc(cond, misc, device='cuda'):
             weight_dst = th.linspace(start=c_val_dst.item(), end=0.0, steps=n_step-1).to(device)
             weight_dst = weight_dst[..., None, None, None]
         fix_frame = True 
-    elif args.shadow_diff_blurmap:
-        print("[#] Blurring the shadow_diff with weight...")
-        weight_src = c_val_src[..., None, None, None].to(device)
-        weight_dst = c_val_dst[..., None, None, None].to(device)
-        if args.blurmap_reshadow_const_c is not None:
-            weight_src = (weight_src * 0.0) + args.blurmap_reshadow_const_c
-            weight_src = 1 - weight_src
-        elif args.blurmap_reshadow_dec_c_with_given_c is not None:
-            given_c = args.blurmap_reshadow_dec_c_with_given_c
-            weight_src = th.linspace(start=given_c, end=0.0, steps=n_step-1).to(device)
-            weight_src = 1 - weight_src[..., None, None, None]
-        elif args.blurmap_reshadow_inc_c_with_given_c is not None:
-            given_c = args.blurmap_reshadow_inc_c_with_given_c
-            weight_src = th.linspace(start=given_c, end=1.0, steps=n_step-1).to(device)
-            weight_src = 1 - weight_src[..., None, None, None]
-        fix_frame = True
     elif args.postproc_shadow_mask_smooth_diffuse_to_shadow:
         print("[#] Diffuse to shadow...")
         fix_frame = True
