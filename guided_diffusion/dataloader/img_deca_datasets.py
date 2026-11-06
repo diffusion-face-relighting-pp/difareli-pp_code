@@ -292,7 +292,6 @@ class DECADataset(Dataset):
         self.kwargs = kwargs
         self.condition_image = self.cfg.img_cond_model.in_image + self.cfg.img_model.dpm_cond_img + self.cfg.img_model.in_image + self.cfg.img_composer_model.in_image
         self.prep_condition_image = self.cfg.img_cond_model.prep_image + self.cfg.img_model.prep_dpm_cond_img + self.cfg.img_model.prep_in_image + self.cfg.img_composer_model.prep_image
-        print(f"[#] Bounding the input of UNet to +-{self.cfg.img_model.input_bound}")
 
     def __len__(self):
         return len(self.local_images)
@@ -302,46 +301,20 @@ class DECADataset(Dataset):
 
         # Raw Images in dataset
         query_img_name = list(self.local_images.keys())[idx]
-        # print(query_img_name)
-        # if self.force_jpg_key:
-        #     assert '.png' in query_img_name
-        #     query_img_name = query_img_name.replace('.png', '.jpg')
         raw_pil_image = self.load_image(self.local_images[query_img_name])
         raw_img = self.augmentation(pil_image=raw_pil_image)
 
-        # cond_img contains the condition image from "img_cond_model.in_image + img_model.dpm_cond_img"
         cond_img = self.load_condition_image(raw_pil_image, query_img_name) 
-        # if self.cfg.img_cond_model.apply or self.cfg.img_model.apply_dpm_cond_img:
         for i, k in enumerate(self.condition_image):
             if k is None: continue
-            elif k in ['compose']: continue
             elif k == 'raw':
                 each_cond_img = (raw_img / 127.5) - 1
                 each_cond_img = np.transpose(each_cond_img, [2, 0, 1])
-            elif k == 'shadow_mask':
-                each_cond_img = self.augmentation(PIL.Image.fromarray(cond_img[k]))
-                each_cond_img = self.prep_cond_img(each_cond_img, k, i)
-                each_cond_img = np.transpose(each_cond_img, [2, 0, 1])
-                each_cond_img = (each_cond_img / 127.5) - 1
-                out_dict[f'{k}_img'] = each_cond_img[[0], ...]  # The shadow mask has the same value across 3-channels
             elif 'woclip' in k:
                 #NOTE: Input is the npy array -> Used cv2.resize() to handle
                 each_cond_img = cv2.resize(cond_img[k], (self.resolution, self.resolution), interpolation=cv2.INTER_AREA)
                 each_cond_img = np.transpose(each_cond_img, [2, 0, 1])
                 out_dict[f'{k}_img'] = each_cond_img
-            elif k == 'shadow_diff':
-                each_cond_img = cv2.resize(cond_img[k].astype(np.uint8), (self.resolution, self.resolution), interpolation=cv2.INTER_NEAREST)
-                assert np.allclose(each_cond_img[..., 0], each_cond_img[..., 1]) and np.allclose(each_cond_img[..., 0], each_cond_img[..., 2])
-                each_cond_img = each_cond_img[..., 0:1]
-                each_cond_img = np.transpose(each_cond_img, [2, 0, 1])
-                out_dict[f'{k}_img'] = each_cond_img / 255.0
-                # Loading mask for inference
-                if self.mode == 'sampling':
-                    out_dict[f'{k}_img'][out_dict[f'{k}_img'] == 127/255.] = 0.5
-                    for tk in ['mface_mask', 'meg_mask']:
-                        out_dict[f'{k}_{tk}'] = cv2.resize(cond_img[f'{k}_{tk}'].astype(np.uint8), (self.resolution, self.resolution), interpolation=cv2.INTER_NEAREST)
-                        out_dict[f'{k}_{tk}'] = np.transpose(out_dict[f'{k}_{tk}'], [2, 0, 1])
-                        out_dict[f'{k}_{tk}'] = out_dict[f'{k}_{tk}'][0:1, ...]
             elif k == 'shadow_diff_with_weight_simplified' or k == 'shadow_diff_with_weight_simplified_inverse':
                 each_cond_img = cv2.resize(cond_img[k], (self.resolution, self.resolution), interpolation=cv2.INTER_NEAREST)
                 if k == 'shadow_diff_with_weight_simplified_inverse':
@@ -385,28 +358,6 @@ class DECADataset(Dataset):
                 cond_img[k] = np.concatenate(cond_img[k], axis=0)  # Concatenate the face structure parts into n-channels(parts)
                 # Store value
                 out_dict[f'{k}_img'] = cond_img[k]
-            elif ('canny_edge_bg' in k):
-                mask = cond_img[f'{k}_mask']
-                mask = ~self.prep_cond_img(~mask, k, i)
-                # print("G", mask, np.unique(mask))
-                mask = cv2.resize(mask.astype(np.uint8), (self.resolution, self.resolution), interpolation=cv2.INTER_NEAREST)
-                assert np.allclose(mask[..., 0], mask[..., 1]) and np.allclose(mask[..., 0], mask[..., 2])
-                mask = mask[..., 0:1]
-                # print("P", mask, np.unique(mask))
-                # print("K", mask, np.unique(mask))
-                # print(k, cond_img[k].shape, sobel_mask.shape)
-                min_val, max_val = self.cfg.img_cond_model.canny_thres[i]
-                grey_img = cv2.cvtColor(raw_img[..., ::-1], cv2.COLOR_BGR2GRAY)
-                # grey_img = cv2.blur(grey_img, (5, 5))
-                each_cond_img = cv2.Canny(grey_img, int(min_val), int(max_val))
-                each_cond_img = each_cond_img[..., None] / 255.0
-                # print(each_cond_img.shape, mask.shape)
-                each_cond_img = each_cond_img * mask
-                each_cond_img = np.transpose(each_cond_img, [2, 0, 1])
-                # Store mask & img
-                out_dict[f'{k}_img'] = each_cond_img
-                out_dict[f'{k}_mask'] = np.transpose(mask, (2, 0, 1))
-                assert np.all(np.isin(out_dict[f'{k}_mask'], [0, 1]))
             else:
                 each_cond_img = self.augmentation(PIL.Image.fromarray(cond_img[k]))
                 each_cond_img = self.prep_cond_img(each_cond_img, k, i)
@@ -416,18 +367,12 @@ class DECADataset(Dataset):
         # Consturct the 'cond_params' for non-spatial conditioning
         if self.cfg.img_model.conditioning: 
             try:
-                # print(query_img_name)
-                # for k in self.precomp_params_key:
-                    # print(k, self.deca_params[query_img_name][k].shape)
                 out_dict["cond_params"] = np.concatenate([self.deca_params[query_img_name][k] for k in self.precomp_params_key])
-                # print(out_dict["cond_params"].shape)
             except Exception as e: 
                 print("Error : ", e)
-            # print(out_dict["cond_params"].shape)
             
         for k in self.deca_params[query_img_name].keys():
             out_dict[k] = self.deca_params[query_img_name][k]
-        # print(out_dict.keys())
         out_dict['image_name'] = query_img_name
         out_dict['raw_image'] = np.transpose(np.array(raw_pil_image), [2, 0, 1])
         out_dict['raw_image_path'] = self.local_images[query_img_name]
@@ -488,33 +433,16 @@ class DECADataset(Dataset):
             elif ('sobel' in in_image_type) or ('laplacian' in in_image_type):
                 condition_image[in_image_type] = np.load(self.kwargs['in_image_for_cond'][in_image_type][query_img_name.replace(self.img_ext, '.npy')], allow_pickle=True)
                 condition_image[f"{in_image_type}_mask"] = self.face_segment(cond_name=in_image_type, segment_part=f"{in_image_type}_mask", query_img_name=query_img_name)
-            elif 'shadow_mask' in in_image_type:
-                condition_image[in_image_type] = np.array(self.load_image(self.kwargs['in_image_for_cond'][in_image_type][query_img_name.replace(self.img_ext, '.png')]))
-            elif 'shadow_diff_with_weight_onehot' == in_image_type:
-                condition_image[in_image_type] = np.load(self.kwargs['in_image_for_cond'][in_image_type][query_img_name.replace(self.img_ext, '.npy')], allow_pickle=True)
-                if self.mode == 'sampling':
-                    condition_image["shadow_diff"] = np.array(self.load_image(self.kwargs['in_image_for_cond']['shadow_diff'][query_img_name.replace(self.img_ext, '.png')]))
-                    condition_image[f"{in_image_type}_mface_mask"] = self.face_segment(cond_name=f"faceseg_faceskin&nose&mouth&eyebrows&eyes&glasses", segment_part=f"faceseg_faceskin&nose&mouth&eyebrows&eyes&glasses", query_img_name=query_img_name)
-                    condition_image[f"{in_image_type}_meg_mask"] = self.face_segment(cond_name=f"faceseg_eyes&glasses", segment_part=f"faceseg_eyes&glasses", query_img_name=query_img_name)
             elif 'shadow_diff_with_weight_simplified' == in_image_type or 'shadow_diff_with_weight_simplified_inverse' == in_image_type:
                 condition_image[in_image_type] = np.load(self.kwargs['in_image_for_cond'][in_image_type][query_img_name.replace(self.img_ext, '.npy')], allow_pickle=True)
                 if self.mode == 'sampling':
                     condition_image["shadow_diff"] = np.load(self.kwargs['in_image_for_cond']['shadow_diff'][query_img_name.replace(self.img_ext, '.npy')])
                     condition_image[f"{in_image_type}_mface_mask"] = self.face_segment(cond_name=f"faceseg_faceskin&nose&mouth&eyebrows&eyes&glasses", segment_part=f"faceseg_faceskin&nose&mouth&eyebrows&eyes&glasses", query_img_name=query_img_name)
                     condition_image[f"{in_image_type}_meg_mask"] = self.face_segment(cond_name=f"faceseg_eyes&glasses", segment_part=f"faceseg_eyes&glasses", query_img_name=query_img_name)
-            elif 'shadow_diff' == in_image_type:
-                condition_image[in_image_type] = np.array(self.load_image(self.kwargs['in_image_for_cond'][in_image_type][query_img_name.replace(self.img_ext, '.png')]))
-                if self.mode == 'sampling':
-                    condition_image[f"{in_image_type}_mface_mask"] = self.face_segment(cond_name=f"faceseg_faceskin&nose&mouth&eyebrows&eyes&glasses", segment_part=f"faceseg_faceskin&nose&mouth&eyebrows&eyes&glasses", query_img_name=query_img_name)
-                    condition_image[f"{in_image_type}_meg_mask"] = self.face_segment(cond_name=f"faceseg_eyes&glasses", segment_part=f"faceseg_eyes&glasses", query_img_name=query_img_name)
             elif in_image_type == 'raw':
                 condition_image['raw'] = np.array(self.load_image(self.kwargs['in_image_for_cond']['raw'][query_img_name]))
             elif in_image_type == 'face_structure':
                 condition_image['face_structure'] = self.face_segment_to_onehot(cond_name=in_image_type, segment_part=self.cfg.conditioning.face_structure.parts, query_img_name=query_img_name)
-            elif ('canny_edge_bg' in in_image_type):
-                condition_image[f"{in_image_type}_mask"] = self.face_segment(cond_name=f"{in_image_type}_mask", segment_part=f"{in_image_type}_mask", query_img_name=query_img_name)
-            elif in_image_type in ['compose']:
-                continue
             else: raise ValueError(f"Not supported type of condition image : {in_image_type}")
         return condition_image
     
@@ -524,9 +452,6 @@ class DECADataset(Dataset):
         return seg_m
 
     def face_segment(self, cond_name, segment_part, query_img_name):
-        # print(self.kwargs.keys())
-        # print(self.kwargs['in_image_for_cond'].keys())
-        # exit()
         face_segment_anno = self.load_image(self.kwargs['in_image_for_cond'][cond_name][query_img_name.replace(self.img_ext, '.png')])
         
         face_segment_anno = np.array(face_segment_anno)

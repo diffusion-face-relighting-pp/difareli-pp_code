@@ -159,6 +159,8 @@ def _adjust_render_contrast(rendered_tmp, alpha_images, adjust_contrast):
 
 def init_deca_modules(rasterize_type='pytorch3d', device='cuda'):
     """Initializes FLAME masks and DECA renderer instances once for reuse across subjects."""
+    print("*"*100)
+    print("[#] Initializing DECA modules...")
     t0_deca = time.time()
     mask = params_utils.load_flame_mask()
     deca_obj = params_utils.init_deca(mask=mask, rasterize_type=rasterize_type, device=device)
@@ -168,6 +170,8 @@ def init_deca_modules(rasterize_type='pytorch3d', device='cuda'):
     flame_face_scalp = params_utils.load_flame_mask(['face', 'scalp', 'left_eyeball', 'right_eyeball'])
     deca_obj_face_scalp = params_utils.init_deca(mask=flame_face_scalp, rasterize_type=rasterize_type, device=device)
     load_deca_for_shadow_time = time.time() - t0_shadow_deca
+    print(f"[#] DECA modules initialized in {load_deca_time:.2f}s (render) + {load_deca_for_shadow_time:.2f}s (shadow)")
+    print("*"*100)
 
     return {
         'mask': mask,
