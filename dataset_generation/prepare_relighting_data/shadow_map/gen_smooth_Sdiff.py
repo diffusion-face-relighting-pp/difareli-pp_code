@@ -145,9 +145,13 @@ def resolve_reshadow_frames_dir(base_dir, mode_key, ckpt, set_name, n_frames, mo
             continue
         for entry in sorted(os.listdir(cand)):
             subj_dir = os.path.join(cand, entry)
-            if os.path.isdir(subj_dir) and os.path.exists(os.path.join(subj_dir, 'res_frame0.png')):
-                stem = os.path.splitext(entry)[0]
+            if not os.path.isdir(subj_dir):
+                continue
+            stem = os.path.splitext(entry)[0]
+            if os.path.exists(os.path.join(subj_dir, 'res_frame0.png')):
                 frame_map[stem] = subj_dir
+            elif os.path.exists(os.path.join(subj_dir, 'frames', 'res_frame0.png')):
+                frame_map[stem] = os.path.join(subj_dir, 'frames')
         if frame_map:
             return frame_map
 

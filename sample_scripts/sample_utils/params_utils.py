@@ -5,6 +5,7 @@ import torch as th
 import glob, os, sys
 import cv2
 from collections import defaultdict
+DECA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../cond_utils/DECA"))
 
 def params_to_model(shape, exp, pose, cam, lights):
 
@@ -47,14 +48,6 @@ def save_obj(renderer, filename, opdict):
     # save coarse mesh
     util.write_obj(filename, vertices, faces, colors=colors)
 
-# def get_R_normals(n_step):
-#     src = np.array([0, 0, 2.50])
-#     dst = np.array([0, 0, 6.50])
-#     rvec = np.linspace(src, dst, n_step)
-#     R = [cv2.Rodrigues(rvec[i])[0] for i in range(rvec.shape[0])]
-#     R = np.stack(R, axis=0)
-#     return R
-
 def get_R_normals(n_step):
     if n_step % 2 == 0:
         fh = sh = n_step//2
@@ -81,66 +74,28 @@ def get_R_normals(n_step):
     R = np.stack(R, axis=0)
     return R
 
-def grid_sh(n_grid, sh=None, sx=[-1, 1], sy=[1, 0], sh_scale=1.0, use_sh=False):
-    sh_light = []
-    sh_original = sh.cpu().numpy().copy().reshape(-1, 9, 3)
-    print(f"[#] Buiding grid sh with : span_x={sx}, span_y={sy}, n_grid={n_grid}")
-    print(f"[#] Given sh : \n{sh_original}")
-    # sx is from left(negative) -> right(positive)
-    # sy is from top(positive) -> bottom(negative)
-    # print(sx, sy)
-    # print(np.linspace(sx[0], sx[1], n_grid))
-    # exit()
-    for ix, lx in enumerate(np.linspace(sx[0], sx[1], n_grid)):
-        for iy, ly in enumerate(np.linspace(sy[0], sy[1], n_grid)):
-            l = np.array((lx, ly, 1))
-            l = l / np.linalg.norm(l)
-            
-            if use_sh:
-                tmp_light = sh_original.copy()
-            else:
-                tmp_light = np.zeros((1, 9, 3))
-                tmp_light[0:1, 0:1, :] = sh_original[0:1, 0:1, :] * sh_scale
-                
-            # if iy in [1, 2, 3]:
-                # print("IN", iy)
-                # print(tmp_light)
-                # tmp_light = tmp_light * sh_scale 
-                # print(tmp_light)
-            
-            tmp_light[0:1, 1:2, :] = l[0]
-            tmp_light[0:1, 2:3, :] = l[1]
-            tmp_light[0:1, 3:4, :] = l[2]
-            # if iy in [0, 1, 2, 3]:
-            tmp_light = tmp_light * sh_scale 
-            sh_light.append(tmp_light)
-        # exit()
-    sh_light = np.concatenate(sh_light, axis=0)
-    sh_light = np.concatenate((sh_original.reshape(-1, 9, 3), sh_light))
-    print(f"[#] Out grid sh : \n{sh_light.shape}")
-    return sh_light
-
 def load_flame_mask(parts=['face']):
-    if os.path.exists('/home/mint/guided-diffusion/sample_scripts/cond_utils/DECA/data/FLAME_masks_face-id.pkl') and os.path.exists('/home/mint/guided-diffusion/sample_scripts/cond_utils/DECA/data/FLAME_masks.pkl'):
-        f_mask = np.load('/home/mint/guided-diffusion/sample_scripts/cond_utils/DECA/data/FLAME_masks_face-id.pkl', allow_pickle=True, encoding='latin1')
-        v_mask = np.load('/home/mint/guided-diffusion/sample_scripts/cond_utils/DECA/data/FLAME_masks.pkl', allow_pickle=True, encoding='latin1')
-    elif os.path.exists('/home/mint/Dev/DiFaReli/difareli-faster/sample_scripts/cond_utils/DECA/data/FLAME_masks_face-id.pkl') and os.path.exists('/home/mint/Dev/DiFaReli/difareli-faster/sample_scripts/cond_utils/DECA/data/FLAME_masks.pkl'):
-        f_mask = np.load('/home/mint/Dev/DiFaReli/difareli-faster/sample_scripts/cond_utils/DECA/data/FLAME_masks_face-id.pkl', allow_pickle=True, encoding='latin1')
-        v_mask = np.load('/home/mint/Dev/DiFaReli/difareli-faster/sample_scripts/cond_utils/DECA/data/FLAME_masks.pkl', allow_pickle=True, encoding='latin1')
-    elif os.path.exists('/home2/mint/Dev/DiFaReli/difareli-faster/sample_scripts/cond_utils/DECA/data/FLAME_masks_face-id.pkl') and os.path.exists('/home2/mint/Dev/DiFaReli/difareli-faster/sample_scripts/cond_utils/DECA/data/FLAME_masks.pkl'):
-        f_mask = np.load('/home2/mint/Dev/DiFaReli/difareli-faster/sample_scripts/cond_utils/DECA/data/FLAME_masks_face-id.pkl', allow_pickle=True, encoding='latin1')
-        v_mask = np.load('/home2/mint/Dev/DiFaReli/difareli-faster/sample_scripts/cond_utils/DECA/data/FLAME_masks.pkl', allow_pickle=True, encoding='latin1')
-    elif os.path.exists('/home/mint/Dev/DiFaReli++/difareli_pp/sample_scripts/cond_utils/DECA/data/FLAME_masks_face-id.pkl') and os.path.exists('/home/mint/Dev/DiFaReli++/difareli_pp/sample_scripts/cond_utils/DECA/data/FLAME_masks.pkl'):
-        f_mask = np.load('/home/mint/Dev/DiFaReli++/difareli_pp/sample_scripts/cond_utils/DECA/data/FLAME_masks_face-id.pkl', allow_pickle=True, encoding='latin1')
-        v_mask = np.load('/home/mint/Dev/DiFaReli++/difareli_pp/sample_scripts/cond_utils/DECA/data/FLAME_masks.pkl', allow_pickle=True, encoding='latin1')
+    """Load FLAME vertex masks from the repository DECA data directory."""
+    f_mask_path = os.path.join(DECA_DIR, "data", "FLAME_masks_face-id.pkl")
+    v_mask_path = os.path.join(DECA_DIR, "data", "FLAME_masks.pkl")
+    if not os.path.exists(f_mask_path):
+        raise FileNotFoundError(f"[#] FLAME_masks_face-id.pkl not found at: {f_mask_path}")
     else:
-        print("[#] No FLAME_masks found!")
-        exit()
+        f_mask = np.load(f_mask_path, allow_pickle=True, encoding='latin1')
+
+    if not os.path.exists(v_mask_path):
+        raise FileNotFoundError(f"[#] FLAME_masks.pkl not found at: {v_mask_path}")
+    else:
+        v_mask = np.load(v_mask_path, allow_pickle=True, encoding='latin1')
+
+    print("[#] Flame masks are loaded from :", f_mask_path, "and", v_mask_path)
+    print("[#] Parts to be used for mask :", parts)
+
     mask={
         'v_mask':sum([v_mask[part].tolist() for part in parts], []),
         'f_mask':sum([f_mask[part].tolist() for part in parts], [])
     }
-    return mask        
+    return mask   
 
 def init_deca(useTex=False, extractTex=True, device='cuda', 
               deca_mode='only_renderer', mask=None, deca_obj=None, rasterize_type='standard'):
@@ -156,428 +111,15 @@ def init_deca(useTex=False, extractTex=True, device='cuda',
     deca_cfg.model.use_tex = useTex
     deca_cfg.rasterizer_type = rasterize_type
     deca_cfg.model.extract_tex = extractTex
+    print("[#] Rasterizer type :", rasterize_type)
     deca_obj = deca.DECA(config = deca_cfg, device=device, mode=deca_mode, mask=mask)
     return deca_obj
-
-def sh_to_ld_brightest_region(sh):
-    from scipy.spatial.transform import Rotation as R
-    from matplotlib import pyplot as plt
-    import cv2
-
-    import pyshtools as pysh
-
-    def applySHlight(normal_images, sh_coeff):
-        N = normal_images
-        sh = th.stack(
-            [
-            N[0] * 0.0 + 1.0,
-            N[0],
-            N[1],
-            N[2],
-            N[0] * N[1],
-            N[0] * N[2],
-            N[1] * N[2],
-            N[0] ** 2 - N[1] ** 2,
-            3 * (N[2] ** 2) - 1,
-            ],
-            0,
-        )  # [9, h, w]
-        pi = np.pi
-        constant_factor = th.tensor(
-            [
-            1 / np.sqrt(4 * pi),
-            ((2 * pi) / 3) * (np.sqrt(3 / (4 * pi))),
-            ((2 * pi) / 3) * (np.sqrt(3 / (4 * pi))),
-            ((2 * pi) / 3) * (np.sqrt(3 / (4 * pi))),
-            (pi / 4) * (3) * (np.sqrt(5 / (12 * pi))),
-            (pi / 4) * (3) * (np.sqrt(5 / (12 * pi))),
-            (pi / 4) * (3) * (np.sqrt(5 / (12 * pi))),
-            (pi / 4) * (3 / 2) * (np.sqrt(5 / (12 * pi))),
-            (pi / 4) * (1 / 2) * (np.sqrt(5 / (4 * pi))),
-            ]
-        ).float()
-        sh = sh * constant_factor[:, None, None]
-
-        shading = th.sum(
-            sh_coeff[:, :, None, None] * sh[:, None, :, :], 0
-        )  # [9, 3, h, w]
-        return shading
-
-    def applySHlightXYZ(xyz, sh):
-        out = applySHlight(xyz, sh)
-        # out /= pt.max(out)
-        out *= 0.7
-        return th.clip(out, 0, 1)
-
-    def genSurfaceNormals(n):
-        x = th.linspace(-1, 1, n)
-        y = th.linspace(1, -1, n)
-        y, x = th.meshgrid(y, x)
-
-        z = (1 - x ** 2 - y ** 2)
-        z[z < 0] = 0
-        z = th.sqrt(z)
-        return th.stack([x, y, z], 0)
-
-    def drawSphere(sh, img_size=256):
-        n = img_size
-        xyz = genSurfaceNormals(n)
-        out = applySHlightXYZ(xyz, sh)
-        out[:, xyz[2] == 0] = 0
-        return out, xyz
-    
-    sh = sh.reshape(-1, 9, 3)[0]
-    visible_sphere, normals_sphere = drawSphere(sh)
-    visible_sphere = visible_sphere.permute(1, 2, 0).cpu().numpy()
-    plt.imshow(visible_sphere)
-    plt.savefig('./visible_sphere.png')
-    # Locate the brightest point
-    visible_sphere_draw = (visible_sphere.copy() * 255).astype(np.uint8)
-    
-    # Gray scale
-    visible_sphere_tmp = cv2.cvtColor(visible_sphere_draw, cv2.COLOR_RGB2GRAY)
-    brightest = np.unravel_index(visible_sphere_tmp.argmax(), visible_sphere_tmp.shape)
-    
-    bright_area = np.isclose(a=visible_sphere_tmp, b=visible_sphere_tmp.max(), atol=50)
-    import scipy
-    cm = scipy.ndimage.center_of_mass(bright_area)
-    
-    # print(bright_area.shape)
-    bright_area = np.repeat(bright_area[..., None] * 255, 3, axis=2).astype(np.uint8)
-    cv2.circle(bright_area, (int(cm[1]), int(cm[0])), 5, (255, 0, 0), -1)
-    plt.imshow(bright_area)
-    plt.savefig('./bright_area.png')
-    
-    cv2.circle(visible_sphere_draw, (int(cm[1]), int(cm[0])), 5, (0, 255, 0), -1)
-    plt.imshow(visible_sphere_draw)
-    plt.savefig('./visible_sphere_draw.png')
-    
-    normals_sphere = normals_sphere.permute(1, 2, 0).cpu().numpy()
-    light_direction = normals_sphere[brightest[0], brightest[1]]
-    light_direction = normals_sphere[int(cm[0]), int(cm[1])]
-    
-    return th.tensor(light_direction)[None, ...], (normals_sphere, visible_sphere, visible_sphere_draw, bright_area)
-
-def sh_to_ld_brightest_region_G(sh, scale=0.03):
-    from scipy.spatial.transform import Rotation as R
-    from matplotlib import pyplot as plt
-    import cv2
-
-    import pyshtools as pysh
-
-    def applySHlight(normal_images, sh_coeff):
-        N = normal_images
-        sh = th.stack(
-            [
-            N[0] * 0.0 + 1.0,
-            N[0],
-            N[1],
-            N[2],
-            N[0] * N[1],
-            N[0] * N[2],
-            N[1] * N[2],
-            N[0] ** 2 - N[1] ** 2,
-            3 * (N[2] ** 2) - 1,
-            ],
-            0,
-        )  # [9, h, w]
-        pi = np.pi
-        constant_factor = th.tensor(
-            [
-            1 / np.sqrt(4 * pi),
-            ((2 * pi) / 3) * (np.sqrt(3 / (4 * pi))),
-            ((2 * pi) / 3) * (np.sqrt(3 / (4 * pi))),
-            ((2 * pi) / 3) * (np.sqrt(3 / (4 * pi))),
-            (pi / 4) * (3) * (np.sqrt(5 / (12 * pi))),
-            (pi / 4) * (3) * (np.sqrt(5 / (12 * pi))),
-            (pi / 4) * (3) * (np.sqrt(5 / (12 * pi))),
-            (pi / 4) * (3 / 2) * (np.sqrt(5 / (12 * pi))),
-            (pi / 4) * (1 / 2) * (np.sqrt(5 / (4 * pi))),
-            ]
-        ).float()
-        sh = sh * constant_factor[:, None, None]
-
-        shading = th.sum(
-            sh_coeff[:, :, None, None] * sh[:, None, :, :], 0
-        )  # [9, 3, h, w]
-        return shading
-
-    def applySHlightXYZ(xyz, sh):
-        out = applySHlight(xyz, sh)
-        # out /= pt.max(out)
-        out *= 0.7
-        return th.clip(out, 0, 1)
-
-    def genSurfaceNormals(n):
-        x = th.linspace(-1, 1, n)
-        y = th.linspace(1, -1, n)
-        y, x = th.meshgrid(y, x)
-
-        z = (1 - x ** 2 - y ** 2)
-        z[z < 0] = 0
-        z = th.sqrt(z)
-        return th.stack([x, y, z], 0)
-
-    def drawSphere(sh, img_size=256):
-        n = img_size
-        xyz = genSurfaceNormals(n)
-        out = applySHlightXYZ(xyz, sh)
-        out[:, xyz[2] == 0] = 0
-        return out, xyz
-    
-    sh = sh.reshape(-1, 9, 3)[0]
-    visible_sphere, normals_sphere = drawSphere(sh)
-    mask = (normals_sphere[2:3].permute(1, 2, 0) != 0).cpu().numpy()
-    visible_sphere = visible_sphere.permute(1, 2, 0).cpu().numpy()
-
-    # plt.imshow(visible_sphere)
-    # plt.savefig('./visible_sphere.png')
-
-    # Gray scale
-    visible_sphere_proc = (visible_sphere.copy() * 255).astype(np.uint8)
-    visible_sphere_proc = cv2.cvtColor(visible_sphere_proc, cv2.COLOR_RGB2GRAY)
-    sphere_intensity = visible_sphere_proc.copy() / 255.0
-    import scipy
-
-    def gaussian(x, mean, sigma):
-        # Define the Gaussian function
-        return (1.0 / (sigma * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x - mean) / sigma) ** 2)
-
-    # Use max intensity as mean for representing the brightest point
-    max_as_mean = np.max(sphere_intensity)
-    sigma = max_as_mean * scale  # You can adjust this value for spread
-
-    sphere_to_gaussian = gaussian(sphere_intensity, max_as_mean, sigma)[..., None]
-
-    total_mass = np.sum(sphere_to_gaussian * mask)
-    assert total_mass > 0
-    h, w, _ = sphere_to_gaussian.shape
-    grid = np.meshgrid(np.arange(w), np.arange(h))
-
-    x_centroid = np.sum(grid[0][..., None] * sphere_to_gaussian * mask) / total_mass  # vertical axis
-    y_centroid = np.sum(grid[1][..., None] * sphere_to_gaussian * mask) / total_mass  # horizontal axis
-    cm = scipy.ndimage.center_of_mass(sphere_to_gaussian * mask)
-
-    # Visualize the original image and the Gaussian distribution
-    plt.figure(figsize=(12, 6))
-    plt.subplot(1, 3, 1)
-    plt.imshow(sphere_intensity, cmap='gray')
-    plt.title('Original Grayscale Image')
-    plt.axis('off')
-
-    plt.subplot(1, 3, 2)
-    plt.imshow(sphere_to_gaussian, cmap='gray')
-    plt.axhline(cm[0], color='red', linestyle='--')
-    plt.axvline(cm[1], color='red', linestyle='--')
-    plt.title('Scipy (mu={:.2f}, f={:.3f}, std={:.2f})'.format(max_as_mean, scale, sigma))
-
-    plt.subplot(1, 3, 3)
-    plt.imshow(sphere_to_gaussian, cmap='gray')
-    plt.axhline(y_centroid, color='blue', linestyle='--')
-    plt.axvline(x_centroid, color='blue', linestyle='--')
-    plt.title('W/ mask (mu={:.2f}, f={:.3f}, std={:.2f})'.format(max_as_mean, scale, sigma))
-    plt.axis('off')
-    fig = plt.gcf()
-    from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
-    canvas = FigureCanvas(fig)
-    canvas.draw()
-    # Convert canvas to an image array
-    image_sph_ld = np.frombuffer(canvas.tostring_rgb(), dtype=np.uint8) # H x W x 3
-    image_sph_ld = image_sph_ld.reshape(canvas.get_width_height()[::-1] + (3,)) # H x W x 3
-    plt.close()
-
-    normals_sphere = normals_sphere.permute(1, 2, 0).cpu().numpy()
-    # light_direction = normals_sphere[int(cm[0]), int(cm[1])]
-    light_direction = normals_sphere[int(y_centroid), int(x_centroid)]
-    
-    return th.tensor(light_direction)[None, ...], (normals_sphere, visible_sphere, visible_sphere_proc, image_sph_ld)
 
 def sh_to_ld(sh):
     #NOTE: Roughly Convert the SH to light direction
     sh = sh.reshape(-1, 9, 3)
     ld = th.mean(sh[0:1, 1:4, :], dim=2)
     return ld
-
-def render_shadow_mask(sh_light, cam, verts, deca, axis_1=False):
-    sys.path.append('/home2/mint/Dev/DiFaReli/difareli-faster/sample_scripts/cond_utils/DECA/')
-    sys.path.append('/home/mint/Dev/DiFaReli/difareli-faster/sample_scripts/cond_utils/DECA/')
-    sys.path.insert(0, '/home/mint/guided-diffusion/sample_scripts/cond_utils/DECA/')
-
-    from decalib.utils import util
-    
-    shadow_mask_all = []
-    if verts.shape[0] >= 2:
-        tmp = []
-        for i in range(1, verts.shape[0]):
-            tmp.append(th.allclose(verts[[0]], verts[[i]]))
-        assert all(tmp)
-        
-    depth_image, alpha_image = deca.render.render_depth(verts.cuda())   # Depth : B x 1 x H x W
-    _, _, h, w = depth_image.shape
-    depth_grid = np.meshgrid(np.arange(h), np.arange(w), indexing='xy')
-    depth_grid = np.repeat(np.stack((depth_grid), axis=-1)[None, ...], repeats=sh_light.shape[0], axis=0)   # B x H x W x 2
-    depth_grid = np.concatenate((depth_grid, depth_image.permute(0, 2, 3, 1)[..., 0:1].cpu().numpy()), axis=-1) # B x H x W x 3
-    depth_grid[..., 2] *= 256
-    depth_grid = th.tensor(depth_grid).cuda()
-    shadow_mask = th.clone(depth_grid[:, :, :, 2])
-    # print(shadow_mask.shape, sh_light.shape)
-    for i in range(sh_light.shape[0]):
-        each_depth_grid = depth_grid[i].clone()
-        #NOTE: Render the shadow mask from light direction
-        ld = sh_to_ld(sh=th.tensor(sh_light[[i]])).cuda()
-        ld = util.batch_orth_proj(ld[None, ...], cam[None, ...].cuda());     # This fn takes pts=Bx3, cam=Bx3
-        ld[:, :, 1:] = -ld[:, :, 1:]
-        ray = ld.view(3).cuda()
-        if axis_1:
-            ray[1] *= -1    # This for jst temporarly fix the axis 1 which the shading is bright in the middle, but the light direction is back of the head
-        ray[2] *= 0.5
-        n = 256
-        ray = ray / th.norm(ray)
-        mxaxis = max(abs(ray[0]), abs(ray[1]))
-        shift = ray / mxaxis * th.arange(n).view(n, 1).cuda()
-        coords = each_depth_grid.view(1, n, n, 3) + shift.view(n, 1, 1, 3)
-
-        output = th.nn.functional.grid_sample(
-            th.tensor(np.tile(each_depth_grid[:, :, 2].view(1, 1, n, n).cpu().numpy(), [n, 1, 1, 1])).cuda(),
-            coords[..., :2] / (n - 1) * 2 - 1,
-            align_corners=True)
-        diff = coords[..., 2] - output[:, 0] 
-        shadow_mask[i] *= (th.min(diff, dim=0)[0] > -0.1) * 0.5 + 0.5
-        
-    return th.clip(shadow_mask, 0, 255.0)/255.0
-
-def render_shadow_mask_with_smooth_hdr(sh_light, cam, verts, deca, rt_dict, use_sh_to_ld_region=True, axis_1=False, up_rate=1, device='cuda', org_h=128, org_w=128, hdr=True):
-    print("[#] Rendering shadow mask with smooth (pertubation version)...")
-    sys.path.insert(0, '/home/mint/guided-diffusion/sample_scripts/cond_utils/DECA/')
-    sys.path.append('/home/mint/Dev/DiFaReli/difareli-faster/sample_scripts/cond_utils/DECA/')
-    sys.path.append('/home2/mint/Dev/DiFaReli/difareli-faster/sample_scripts/cond_utils/DECA/')
-    from decalib.utils import util
-    from torchvision.transforms import GaussianBlur
-    import cv2, tqdm
-    
-    if verts.shape[0] >= 2:
-        tmp = []
-        for i in range(1, verts.shape[0]):
-            tmp.append(th.allclose(verts[[0]], verts[[i]]))
-        assert all(tmp)
-
-    verts = verts[0:1, ...].cuda()  # Save memory by rendering only 1st image
-    # depth_image_f, _ = deca['face'].render.render_depth(verts, up_rate=up_rate)   # Depth : B x 1 x H x W
-    # depth_image_fe, _ = deca['face_eyes'].render.render_depth(verts, up_rate=up_rate)   # Depth : B x 1 x H x W
-    depth_image_fs, _ = deca['face_scalp'].render.render_depth(verts, up_rate=up_rate)   # Depth : B x 1 x H x W
-    B, C, h, w = depth_image_fs.shape
-
-    depth_grid = np.meshgrid(np.arange(h), np.arange(w), indexing='xy')
-    depth_grid = np.stack((depth_grid), axis=-1)[None, ...]   # 1 x H x W x 2
-
-    orig = depth_image_fs.detach().clone()# * mask_eyes  # Remove depth of eyes out
-    mask_face = orig != 0
-    # mask_eyes = (depth_image_f!=0) + (depth_image_fe==0)
-    # mask_face = ((depth_image_f != 0) + (depth_image_fe == 0)) * (depth_image_fs != 0)
-    mask_face = mask_face.float()
-
-    blurred_orig = GaussianBlur(kernel_size=13, sigma=2.0)(orig)#.cpu().numpy()
-    assert blurred_orig.shape == depth_image_fs.shape
-
-    blurred_mask = GaussianBlur(kernel_size=13, sigma=2.0)(mask_face)#.cpu().numpy()
-    blurred_mask[blurred_mask == 0] = 1e-10
-    blurred_orig = blurred_orig / blurred_mask
-
-    blurred_orig = blurred_orig * (mask_face)
-
-    # depth_image_smooth = blurred_orig * 100
-    print(f"[#] Scale depth with {rt_dict['scale_depth']}...")
-    depth_image_smooth = blurred_orig * rt_dict['scale_depth']
-
-    depth_grid = np.concatenate((depth_grid, depth_image_smooth.permute(0, 2, 3, 1)[..., 0:1].cpu().numpy()), axis=-1) # B x H x W x 3
-
-    # depth_grid[..., 2] *= (256 * up_rate)
-    depth_grid = th.tensor(depth_grid).to(device)   # B x H x W x 3; B should be 1
-    assert depth_grid.shape[0] == 1
-    depth_grid = depth_grid.squeeze(0)
-
-    out_shadow_mask = []
-    out_kk = []
-    out_sph_ld = []
-    rt_scale = rt_dict['rt_regionG_scale']
-    if use_sh_to_ld_region:
-        print(f"[#] Approximate the light direction from brightest spot with rt_scale={rt_scale}...")
-    else:
-        print(f"[#] Approximate the light direction from the mean of SH coffecients [2nd, 3rd and 4th] ...")
-    for i in tqdm.tqdm(range(sh_light.shape[0]), position=0, desc="Rendering Shadow Mask on each Sh..."):
-        #NOTE: Render the shadow mask from light direction
-
-        shadow_mask = th.clone((depth_image_fs.permute(0, 2, 3, 1)[:, :, :, 0])).to(device)
-        if use_sh_to_ld_region:
-            ld, misc_dat = sh_to_ld_brightest_region_G(sh=th.tensor(sh_light[[i]]), scale=rt_scale)  # Output shape = (1, 3)
-            image_sph_ld = misc_dat[-1]
-            ld[:, 2] *= -1
-        else:
-            ld = sh_to_ld(sh=sh_light[[i]].clone())  # Output shape = (1, 3)
-            image_sph_ld = None
-        ld = util.batch_orth_proj(ld[None, ...].cuda(), cam[None, ...].cuda());     # This fn takes pts=Bx3, cam=Bx3
-        ld[:, :, 1:] = -ld[:, :, 1:]
-        ray = ld.view(3).to(device)
-        ray = ray / th.norm(ray)
-
-        # Ray-0th (left-right)
-        # Ray-1st (top-bottom)
-        # Ray-2nd (front-back)
-        # if axis_1:
-        #     ray[1] *= -1
-            
-        if hdr:
-            ray[2] *= -1    # This for jst temporarly fix the axis 1 which the shading is bright in the middle, but the light direction is back of the head
-            
-            
-        ray[2] *= 0.5
-
-        orth = th.cross(ray, th.tensor([0, 0, 1.0], dtype=th.double).to(device))
-        orth2 = th.cross(ray, orth)
-        orth = orth / th.norm(orth)
-        orth2 = orth2 / th.norm(orth2)
-
-        max_radius = rt_dict['pt_radius']
-        big_coords = []
-        pt_round = rt_dict['pt_round']
-
-        if pt_round > 1:
-            for ti in tqdm.tqdm(range(pt_round), position=1, leave=False, desc="Rendering each perturbed light direction..."):
-
-                tt = ti / (pt_round - 1) * 2 * np.pi * 3
-                n = 256 * up_rate
-                pray = (orth * np.cos(tt) + orth2 * np.sin(tt)) * (ti / (pt_round - 1)) * max_radius + ray
-
-                mxaxis = max(abs(pray[0]), abs(pray[1]))
-                shift = pray / mxaxis * th.arange(n).view(n, 1).to(device)
-                coords = depth_grid.view(1, n, n, 3) + shift.view(n, 1, 1, 3)
-                big_coords.append(coords)
-            big_coords = th.cat(big_coords, dim=0)  # [pt_round * n, n, n, 3]
-        else:
-            n = 256 * up_rate
-            pray = ray.clone()
-            mxaxis = max(abs(pray[0]), abs(pray[1]))
-            shift = pray / mxaxis * th.arange(n).view(n, 1).to(device)
-            big_coords = depth_grid.view(1, n, n, 3) + shift.view(n, 1, 1, 3)
-
-        output = th.nn.functional.grid_sample(
-            th.tensor(np.tile(depth_grid[:, :, 2].view(1, 1, n, n).cpu().numpy(), [n*pt_round, 1, 1, 1])).to(device),
-            big_coords[..., :2] / (n - 1) * 2 - 1,
-            align_corners=True)
-
-        diff = big_coords[..., 2] - output[:, 0] 
-        kk = th.mean((th.min(diff.view(pt_round, -1, n, n), dim=1, keepdim=True)[0] > -0.1) * 1.0, dim=(0, 1)) * 1.0
-        out_sd = shadow_mask * kk
-
-        if up_rate > 1 or (out_sd.shape[1:] != (org_h, org_w)):
-            out_sd = cv2.resize(out_sd.permute(1, 2, 0).cpu().numpy(), (org_h, org_w), interpolation=cv2.INTER_AREA)[None, ...] # Get the shape 1 x H x W
-        else:
-            out_sd = out_sd.cpu().numpy()   # Get the shape 1 x H x W
-        out_shadow_mask.append(th.tensor(out_sd).to(device))
-        out_kk.append(kk[None, ...])
-        out_sph_ld.append(th.tensor(image_sph_ld[None, ...]) if image_sph_ld is not None else None)
-
-    return th.cat(out_shadow_mask), th.cat(out_kk), th.cat(out_sph_ld) if image_sph_ld is not None else None
 
 def render_shadow_mask_with_smooth(sh_light, cam, verts, deca, rt_dict, axis_0=False, axis_1=False, up_rate=1, device='cuda', org_h=256, org_w=256):
     print("[#] Rendering shadow mask with smooth (pertubation version)...")
@@ -706,97 +248,6 @@ def render_shadow_mask_with_smooth(sh_light, cam, verts, deca, rt_dict, axis_0=F
             out_sd = cv2.resize(out_sd.permute(1, 2, 0).cpu().numpy(), (org_h, org_w), interpolation=cv2.INTER_AREA)[None, ...] # Get the shape 1 x H x W
         else:
             out_sd = out_sd.cpu().numpy()   # Get the shape 1 x H x W
-        out_shadow_mask.append(th.tensor(out_sd).to(device))
-        out_kk.append(kk[None, ...])
-        out_sph_ld.append(th.tensor(image_sph_ld[None, ...]) if image_sph_ld is not None else None)
-
-    return th.cat(out_shadow_mask), th.cat(out_kk), th.cat(out_sph_ld) if image_sph_ld is not None else None
-
-def render_shadow_mask_with_smooth_nopt(sh_light, cam, verts, deca, rt_dict, use_sh_to_ld_region=True, axis_1=False, up_rate=1, device='cuda', org_h=128, org_w=128):
-    print("[#] Rendering shadow mask with smooth (no pertubation version)...")
-    sys.path.insert(0, '/home/mint/guided-diffusion/sample_scripts/cond_utils/DECA/')
-    from decalib.utils import util
-    from torchvision.transforms import GaussianBlur
-    import cv2, tqdm
-    
-    if verts.shape[0] >= 2:
-        tmp = []
-        for i in range(1, verts.shape[0]):
-            tmp.append(th.allclose(verts[[0]], verts[[i]]))
-        assert all(tmp)
-
-    verts = verts[0:1, ...].cuda()  # Save memory by rendering only 1st image
-    depth_image_fs, _ = deca['face_scalp'].render.render_depth(verts, up_rate=up_rate)   # Depth : B x 1 x H x W
-    B, C, h, w = depth_image_fs.shape
-
-    depth_grid = np.meshgrid(np.arange(h), np.arange(w), indexing='xy')
-    depth_grid = np.stack((depth_grid), axis=-1)[None, ...]   # 1 x H x W x 2
-
-    orig = depth_image_fs.detach().clone()
-    mask_face = orig != 0
-    mask_face = mask_face.float()
-
-    blurred_orig = GaussianBlur(kernel_size=13, sigma=2.0)(orig)
-    assert blurred_orig.shape == depth_image_fs.shape
-
-    blurred_mask = GaussianBlur(kernel_size=13, sigma=2.0)(mask_face)
-    blurred_mask[blurred_mask == 0] = 1e-10
-    blurred_orig = blurred_orig / blurred_mask
-
-    blurred_orig = blurred_orig * (mask_face)
-
-    depth_image_smooth = blurred_orig * 100
-
-    depth_grid = np.concatenate((depth_grid, depth_image_smooth.permute(0, 2, 3, 1)[..., 0:1].cpu().numpy()), axis=-1) # B x H x W x 3
-
-    depth_grid = th.tensor(depth_grid).to(device)   # B x H x W x 3; B should be 1
-    assert depth_grid.shape[0] == 1
-    depth_grid = depth_grid.squeeze(0)
-
-    out_shadow_mask = []
-    out_kk = []
-    out_sph_ld = []
-    rt_scale = rt_dict['rt_regionG_scale']
-    if use_sh_to_ld_region:
-        print(f"[#] Approximate the light direction from brightest spot with rt_scale={rt_scale}...")
-    else:
-        print(f"[#] Approximate the light direction from the mean of SH coffecients [2nd, 3rd and 4th] ...")
-    for i in tqdm.tqdm(range(sh_light.shape[0]), position=0, desc="Rendering Shadow Mask on each Sh..."):
-        #NOTE: Render the shadow mask from light direction
-
-        shadow_mask = th.clone((depth_image_fs.permute(0, 2, 3, 1)[:, :, :, 0])).to(device)
-        if use_sh_to_ld_region:
-            ld, misc_dat = sh_to_ld_brightest_region_G(sh=th.tensor(sh_light[[i]]), scale=rt_scale)  # Output shape = (1, 3)
-            image_sph_ld = misc_dat[-1]
-            ld[:, 2] *= -1
-        else:
-            ld = sh_to_ld(sh=th.tensor(sh_light[[i]]))  # Output shape = (1, 3)
-            image_sph_ld = None
-        ld = util.batch_orth_proj(ld[None, ...].cuda(), cam[None, ...].cuda());     # This fn takes pts=Bx3, cam=Bx3
-        ld[:, :, 1:] = -ld[:, :, 1:]
-        ray = ld.view(3).to(device)
-        ray = ray / th.norm(ray)
-
-        if axis_1:
-            ray[1] *= -1    # This for jst temporarly fix the axis 1 which the shading is bright in the middle, but the light direction is back of the head
-        ray[2] *= 0.5
-
-        n = 256 * up_rate
-        pray = ray.clone()
-        mxaxis = max(abs(pray[0]), abs(pray[1]))
-        shift = pray / mxaxis * th.arange(n).view(n, 1).to(device)
-        coords = depth_grid.view(1, n, n, 3) + shift.view(n, 1, 1, 3)
-
-        output = th.nn.functional.grid_sample(
-            th.tensor(np.tile(depth_grid[:, :, 2].view(1, 1, n, n).cpu().numpy(), [n, 1, 1, 1])).to(device),
-            coords[..., :2] / (n - 1) * 2 - 1,
-            align_corners=True)
-
-        diff = coords[..., 2] - output[:, 0] 
-        kk = (th.min(diff, dim=0)[0] > -0.1) * 1.0
-        out_sd = shadow_mask * kk
-
-        out_sd = out_sd.cpu().numpy()   # Get the shape 1 x H x W
         out_shadow_mask.append(th.tensor(out_sd).to(device))
         out_kk.append(kk[None, ...])
         out_sph_ld.append(th.tensor(image_sph_ld[None, ...]) if image_sph_ld is not None else None)

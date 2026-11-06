@@ -30,145 +30,6 @@ class Norm(nn.Module):
     def extra_repr(self) -> str:
         return f"ord={self.ord}"
 
-class Hadamart(nn.Module):
-    def __init__(self, clip):
-        super().__init__()
-        self.clip = clip
-        if self.clip is None:
-            print("[#] Use Hadamart-Simple")
-        else:
-            self.clip = str.lower(self.clip)
-            if (self.clip == 'tanh') or (self.clip == 'tanh_after'):
-                print(f"[#] Use Hadamart-{self.clip}")
-                self.clip_layer = nn.Tanh()
-            elif self.clip == 'identity':
-                print("[#] Use Hadamart-Identity")
-            elif self.clip == 'sigmoid':
-                print("[#] Use Hadamart-Sigmoid")
-                self.clip_layer = nn.Sigmoid()
-            else: raise NotImplementedError("[#Hadamart]The clipping method is not found")
-        
-    def forward(self, x, y):
-        if self.clip == 'tanh':
-            out = th.mul(x, self.clip_layer(y))
-        elif self.clip == 'tanh_after':
-            out = self.clip_layer(th.mul(x, y))
-        elif self.clip == 'identity':
-            out = th.mul(x, (1-y))
-        elif self.clip == 'sigmoid':
-            out = th.mul(x, self.clip_layer(y))
-        elif self.clip is None:
-            out = th.mul(x, y)
-        else: raise NotImplementedError("[#Hadamart]The clipping method is not found")
-        return out
-    
-class AdaptiveGN_Patches_Hadamart(nn.Module):
-    def __init__(self, prep, channels, image_size, n_patches, share_norm, silu_scale):
-        super().__init__()
-        self.prep = prep
-        self.channels = channels
-        self.n_patches = n_patches
-        self.image_size = image_size
-        self.patch_size = self.image_size // self.n_patches
-        self.share_norm = share_norm
-        self.silu_scale = silu_scale
-        self.norm = nn.ModuleList(
-            [normalization(channels)] if share_norm else ([normalization(channels)] * (self.n_patches**2))
-        )
-        if self.silu_scale:
-            self.silu = nn.SiLU()
-        self.shift = 0
-        
-    def forward(self, x, y):
-        assert x.shape == y.shape
-        b, c, h, w = x.shape
-        # X to patches
-        x_patches = x.unfold(2, self.patch_size, self.patch_size).unfold(3, self.patch_size, self.patch_size)
-        x_patches = th.einsum('b c i j h w -> b i j c h w', x_patches)
-        _, _, _, _, h_xp, w_xp = x_patches.shape
-        x_patches = x_patches.reshape(b, -1, c, h_xp, w_xp)
-        
-        # Y to patches
-        y_patches = y.unfold(2, self.patch_size, self.patch_size).unfold(3, self.patch_size, self.patch_size)
-        y_patches = th.einsum('b c i j h w -> b i j c h w', y_patches)
-        _, _, _, _, h_yp, w_yp = y_patches.shape
-        y_patches = y_patches.reshape(b, -1, c, h_yp, w_yp)
-        
-        # Norm each patch
-        out_patches = [[] for _ in range(b)]
-        for i in range(b):
-            for j in range(self.n_patches**2):
-                if self.share_norm:
-                    norm_patch = self.norm[0](x_patches[i][[j]])
-                else:
-                    norm_patch = self.norm[j](x_patches[i][[j]])
-                if self.silu_scale:
-                    scale = self.silu(y_patches[i][[j]])
-                else:
-                    scale = y_patches[i][[j]]
-                out_patches[i].append((norm_patch * (1 + scale)) + self.shift)
-            out_patches[i] = th.cat(out_patches[i], dim=0)
-        out_patches = th.stack(out_patches, dim=0)
-        out = self.patches_to_image(patches=out_patches)
-            
-        return out
-        
-    def patches_to_image(self, patches):
-        b_p, n_p, c_p, h_p, w_p = patches.shape
-        assert n_p == self.n_patches**2
-        final_out = patches.reshape(b_p, self.n_patches, self.n_patches, c_p, h_p, w_p)
-        final_out = th.einsum('b i j c h w -> b c i h j w', final_out)
-        final_out = final_out.reshape(b_p, c_p, self.image_size, self.image_size)
-        return final_out
-    
-class AdaptiveGN_ReduceCh_Hadamart(nn.Module):
-    def __init__(self, prep, channels, n_groups, use_bias, activation_scale):
-        super().__init__()
-        self.prep = prep
-        self.channels = channels
-        self.n_groups = n_groups 
-        self.sub_ch_size = self.channels // self.n_groups
-        assert self.channels % self.n_groups == 0
-        self.use_bias = use_bias 
-        self.norm = normalization(channels, n_group=self.sub_ch_size)
-        
-        self.activation_scale = activation_scale
-        if self.activation_scale is None:
-            self.activ_layer = nn.Identity()
-        else:
-            if self.activation_scale.lower() == 'tanh':
-                self.activ_layer = nn.Tanh()
-            elif self.activation_scale.lower() == 'sigmoid':
-                self.activ_layer = nn.Sigmoid()
-            elif self.activation_scale.lower() == 'silu':
-                self.activ_layer = nn.Sigmoid()
-            
-        
-        self.conv2d_scale = nn.Sequential(
-            th.nn.Conv2d(in_channels=channels, out_channels=self.n_groups, kernel_size=1, groups=self.n_groups),
-            self.activ_layer
-        )
-        if self.use_bias:
-            self.conv2d_bias = nn.Sequential(
-                th.nn.Conv2d(in_channels=channels, out_channels=self.n_groups, kernel_size=1, groups=self.n_groups),
-                self.activ_layer
-            )
-        
-    def forward(self, x, y):
-        assert x.shape == y.shape
-        scale = self.conv2d_scale(y)
-        scale = th.repeat_interleave(scale, repeats=self.sub_ch_size, dim=1)
-        if self.use_bias:
-            shift = self.conv2d_bias(y)
-            shift = th.repeat_interleave(shift, repeats=self.sub_ch_size, dim=1)
-        else:
-            shift = 0.
-            
-        out = self.norm(x) * (1 + scale) + shift
-            
-        return out
-        
-        
 class HadamartLayer(nn.Module):
     def __init__(self, cfg, channels, image_size):
         '''
@@ -179,36 +40,11 @@ class HadamartLayer(nn.Module):
         self.prep = cfg.img_model.hadamart_prep
         self.channels = channels
         self.image_size = image_size
-        if self.prep is None:
-            print("[#] Use Hadamart-Simple")
-        else:
-            self.prep = str.lower(self.prep)
-            if self.prep == 'tanh' or self.prep == 'tanh_after':
-                print(f"[#] Use Hadamart-{self.prep}")
-                self.prep_layer = nn.Tanh()
-            elif self.prep == 'sigmoid':
-                print("[#] Use Hadamart-Sigmoid")
-                self.prep_layer = nn.Sigmoid()
-            elif self.prep == 'identity':
-                print("[#] Use Hadamart-Identity")
-            elif self.prep == 'addition':
-                print("[#] Use Addition Hadamart(No multiplication)")
-            elif self.prep == 'adaptive_patches_gn':
-                print("[#] Use Hadamart-AdaptiveGN")
-                self.prep_layer = AdaptiveGN_Patches_Hadamart(prep=self.prep, 
-                                                      channels=self.channels, 
-                                                      image_size=self.image_size, 
-                                                      n_patches=cfg.img_model.hadamart_n_patches, 
-                                                      share_norm=cfg.img_model.hadamart_share_norm,
-                                                      silu_scale=cfg.img_model.hadamart_silu_scale)
-            elif self.prep == 'adaptive_reducech_gn':
-                print("[#] Use Hadamart-AdaptiveGN")
-                self.prep_layer = AdaptiveGN_ReduceCh_Hadamart(prep=self.prep, 
-                                                      channels=self.channels, 
-                                                      n_groups=cfg.img_model.hadamart_n_groups, 
-                                                      use_bias=cfg.img_model.hadamart_use_bias,
-                                                      activation_scale=cfg.img_model.hadamart_activation_scale)
-            else: raise NotImplementedError("[# Hadamart] The clip/condition method is not found")
+        self.prep = str.lower(self.prep)
+        if self.prep == 'tanh' or self.prep == 'tanh_after':
+            # print(f"[#] Use Hadamart-{self.prep}")
+            self.prep_layer = nn.Tanh()
+        else: raise NotImplementedError("[# Hadamart] The clip/condition method is not found")
             
     def forward(self, x, y, apply_):
         if apply_:
@@ -218,14 +54,6 @@ class HadamartLayer(nn.Module):
                 out = th.mul(x, self.prep_layer(y))
             elif self.prep == 'tanh_after':
                 out = self.prep_layer(th.mul(x, y))
-            elif self.prep == 'sigmoid':
-                out = th.mul(x, self.prep_layer(y))
-            elif self.prep == 'identity':
-                out = th.mul(x, (1+y))
-            elif self.prep == 'addition':
-                out = x + y
-            elif self.prep in ['adaptive_patches_gn', 'adaptive_reducech_gn']:
-                out = self.prep_layer(x, y)
             else: raise NotImplementedError("[#Hadamart]The clipping method is not found")
         else:
             out = x

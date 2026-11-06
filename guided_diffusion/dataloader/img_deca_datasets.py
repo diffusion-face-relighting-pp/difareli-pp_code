@@ -48,14 +48,6 @@ def load_deca_params(deca_dir, cfg):
         params_path = glob.glob(f"{deca_dir}/*{k}-anno.txt")
         for path in params_path:
             deca_params[k] = read_params(path=path)
-            if k == 'shadow':
-                if cfg.param_model.shadow_val.norm:
-                    print(f"[#] Normalizing the shadow values...")
-                    # for img_name in list(deca_params[k].keys())[:10]:
-                    #     print(f"Before : {deca_params[k][img_name]}")
-                    deca_params[k] = process_shadow(deca_params[k], cfg)
-                    # for img_name in list(deca_params[k].keys())[:10]:
-                    #     print(f"After : {deca_params[k][img_name]}")
         deca_params[k] = preprocess_light(deca_params[k], k, cfg)
     
     avg_dict = avg_deca(deca_params)
@@ -150,8 +142,8 @@ def load_data_img_deca(
     print("1. Face segment dir : ", cfg.dataset.face_segment_dir)
     print("2. Deca rendered dir : ", cfg.dataset.deca_rendered_dir)
     print("3. Shadow diff dir : ", cfg.dataset.shadow_diff_dir)
-    print("4. Image dir : ", cfg.dataset.data_dir)
-    print("5. Image dir : ", data_dir)
+    print("4. Image dir : ", data_dir)
+    print("5. Deca params dir : ", deca_dir)
     print("="*50)
 
 
@@ -196,14 +188,13 @@ def load_data_img_deca(
                 raise NotImplementedError(f"The {in_image_type}-image type not found.")
 
         in_image[in_image_type] = image_path_list_to_dict(in_image[in_image_type])
-    
-    deca_params, avg_dict = load_deca_params(deca_dir + set_, cfg)
+    deca_params, avg_dict = load_deca_params(os.path.join(deca_dir, set_), cfg)
 
     # For raw image
     in_image['raw'] = _list_image_files_recursively(f"{data_dir}/{set_}")
     in_image['raw'] = image_path_list_to_dict(in_image['raw'], force_jpg_key=force_jpg_key)
-    for k in in_image.keys():
-        print(k, list(in_image[k].items())[0:3])
+    # for k in in_image.keys():
+    #     print(k, list(in_image[k].items())[0:3])
 
     img_dataset = DECADataset(
         resolution=image_size,
