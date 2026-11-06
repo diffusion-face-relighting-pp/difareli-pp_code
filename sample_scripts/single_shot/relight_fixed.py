@@ -132,7 +132,7 @@ def ext_sub_step(n_step, batch_size):
     return np.cumsum([0] + steps)
 
 
-def make_condition(cond, src_idx, dst_idx, n_step, itp_func, dataset, avg_dict, cfg, device):
+def make_condition(cond, src_idx, dst_idx, n_step, itp_func, dataset, avg_dict, cfg, device, deca_modules=None):
     condition_img = list(filter(None, dataset.condition_image))
     args.interpolate = args.itp
     misc = {
@@ -151,7 +151,9 @@ def make_condition(cond, src_idx, dst_idx, n_step, itp_func, dataset, avg_dict, 
     }
     cond['use_render_itp'] = (itp_func is None)
 
-    cond, _, misc = inference_utils.build_condition_image(cond=cond, misc=misc, force_render=args.force_render)
+    cond, _, misc = inference_utils.build_condition_image(
+        cond=cond, misc=misc, force_render=args.force_render, deca_modules=deca_modules
+    )
     misc_paired = copy.deepcopy(misc)
     for i, prefix in enumerate(cfg.img_cond_model.sj_paired):
         misc_paired['condition_img'][i] = f"{prefix}_{misc_paired['condition_img'][i]}"
@@ -196,7 +198,9 @@ def make_condition(cond, src_idx, dst_idx, n_step, itp_func, dataset, avg_dict, 
     return cond, misc
 
 
-def run_relight(model_kwargs, pl_sampling, itp_func, n_step, src_idx, dst_idx, dataset, avg_dict, cfg, device):
+def run_relight(
+    model_kwargs, pl_sampling, itp_func, n_step, src_idx, dst_idx, dataset, avg_dict, cfg, device, deca_modules=None
+):
     cond = copy.deepcopy(model_kwargs)
     cond, misc_rvk = make_condition(
         cond=cond,
@@ -208,6 +212,7 @@ def run_relight(model_kwargs, pl_sampling, itp_func, n_step, src_idx, dst_idx, d
         avg_dict=avg_dict,
         cfg=cfg,
         device=device,
+        deca_modules=deca_modules,
     )
     n_step = misc_rvk['n_step']
 
@@ -369,6 +374,18 @@ if __name__ == '__main__':
     idx_anno = [(ch_bounds[k], ch_bounds[k + 1]) for k in range(len(ch_bounds) - 1)]
     com_name = [f'{each_sj_anno[k]}_{each_in_img[k]}' for k in range(len(each_in_ch))]
 
+    condition_img = list(filter(None, dataset.condition_image))
+    needs_render = (
+        any('deca' in name for name in condition_img)
+        or any('shadow_diff' in name for name in condition_img)
+        or args.force_render
+    )
+    deca_modules = (
+        inference_utils.init_deca_modules(rasterize_type=args.rasterize_type, device=device)
+        if needs_render
+        else None
+    )
+
     for i in range(start, end):
         img_idx = all_img_idx[i]
         src_id, dst_id = all_img_name[i][0], all_img_name[i][1]
@@ -404,6 +421,7 @@ if __name__ == '__main__':
             avg_dict=avg_dict,
             cfg=cfg,
             device=device,
+            deca_modules=deca_modules,
         )
 
         runtime_dict['relit_time'].append(time_dict['relit_time'])

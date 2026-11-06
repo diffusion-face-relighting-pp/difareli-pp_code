@@ -157,7 +157,29 @@ def _adjust_render_contrast(rendered_tmp, alpha_images, adjust_contrast):
     return np.stack(adjusted, axis=0)
 
 
-def build_condition_image(cond, misc, force_render=False):
+def init_deca_modules(rasterize_type='pytorch3d', device='cuda'):
+    """Initializes FLAME masks and DECA renderer instances once for reuse across subjects."""
+    t0_deca = time.time()
+    mask = params_utils.load_flame_mask()
+    deca_obj = params_utils.init_deca(mask=mask, rasterize_type=rasterize_type, device=device)
+    load_deca_time = time.time() - t0_deca
+
+    t0_shadow_deca = time.time()
+    flame_face_scalp = params_utils.load_flame_mask(['face', 'scalp', 'left_eyeball', 'right_eyeball'])
+    deca_obj_face_scalp = params_utils.init_deca(mask=flame_face_scalp, rasterize_type=rasterize_type, device=device)
+    load_deca_for_shadow_time = time.time() - t0_shadow_deca
+
+    return {
+        'mask': mask,
+        'deca_obj': deca_obj,
+        'flame_face_scalp': flame_face_scalp,
+        'deca_obj_face_scalp': deca_obj_face_scalp,
+        'load_deca_time': load_deca_time,
+        'load_deca_for_shadow_time': load_deca_for_shadow_time,
+    }
+
+
+def build_condition_image(cond, misc, force_render=False, deca_modules=None):
     src_idx = misc['src_idx']
     dst_idx = misc['dst_idx']
     n_step = misc['n_step']
@@ -178,14 +200,21 @@ def build_condition_image(cond, misc, force_render=False):
     if needs_render:
         cond.update(_build_light_trajectory(cond, args, src_idx, dst_idx, n_step, itp_func))
 
-        start_t = time.time()
-        mask = (
-            params_utils.load_flame_mask()
-            if (any('deca_masked' in n for n in condition_img) or force_render)
-            else None
-        )
-        load_deca_time = time.time() - start_t
+        if deca_modules is None:
+            deca_modules = misc.get('deca_modules')
+        if deca_modules is None:
+            deca_modules = init_deca_modules(rasterize_type=args.rasterize_type)
+            load_deca_time = deca_modules['load_deca_time']
+            load_deca_for_shadow_time = deca_modules['load_deca_for_shadow_time']
+        else:
+            load_deca_time = 0.0
+            load_deca_for_shadow_time = 0.0
 
+        mask = deca_modules['mask']
+        deca_obj = deca_modules['deca_obj']
+        deca_obj_face_scalp = deca_modules['deca_obj_face_scalp']
+
+        start_t = time.time()
         print(f"[#] Rendering {n_step} frames (batch_size={render_batch_size})...")
         sub_step = mani_utils.ext_sub_step(n_step, render_batch_size)
 
@@ -196,17 +225,6 @@ def build_condition_image(cond, misc, force_render=False):
         render_time = []
         pure_render_deca_time = []
         pure_render_shadow_time = []
-
-        #NOTE: 
-        # 1. deca_obj is used for rendering the shading referece
-        mask = params_utils.load_flame_mask()
-        deca_obj = params_utils.init_deca(mask=mask, rasterize_type=args.rasterize_type)
-
-        # 2. deca_obj_face_scalp is used for rendering the shadow mask (face + scalp + eyeballs)
-        flame_face_scalp = params_utils.load_flame_mask(['face', 'scalp', 'left_eyeball', 'right_eyeball'])
-        t0_shadow_deca = time.time()
-        deca_obj_face_scalp = params_utils.init_deca(mask=flame_face_scalp, rasterize_type=args.rasterize_type)
-        load_deca_for_shadow_time = time.time() - t0_shadow_deca
 
         for i in range(len(sub_step) - 1):
             start, end = sub_step[i], sub_step[i + 1]
@@ -253,8 +271,6 @@ def build_condition_image(cond, misc, force_render=False):
             all_shadow_mask.append(shadow_mask[:, None, ...])
             all_shadow_kk.append(shadow_kk[:, None, ...])
             render_time.append(time.time() - start_t)
-
-        del deca_obj_face_scalp
 
         cond['render_time'] = np.mean(render_time) + load_deca_time
         cond['pure_render_deca_time'] = pure_render_deca_time
