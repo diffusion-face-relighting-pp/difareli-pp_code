@@ -113,12 +113,12 @@ def _build_light_trajectory(cond, args, src_idx, dst_idx, n_step, itp_func):
     if args.rotate_sh:
         print("[#] Lighting mode: Rotate SH of src light")
         interp_cond = mani_utils.rotate_sh(cond, src_idx=src_idx, n_step=n_step, axis=args.rotate_sh_axis)
-    elif args.force_diffuse_sh:
+    elif args.force_diffuse_shading_for_reshadow:
         print("[#] Lighting mode: Diffuse (matted) SH from src light")
         itp_diffuse = getattr(args, 'itp_diffuse_sh', False)
         interp_cond = mani_utils.diffuse_sh(cond, src_idx=src_idx, n_step=n_step, interpolate=itp_diffuse)
         interp_cond['light'][0:1] = cond['light'][src_idx]
-    elif args.same_sh:
+    elif args.force_src_shading_for_reshadow:
         print("[#] Lighting mode: Keep src SH constant")
         interp_cond = {'light': cond['light'][src_idx].repeat(n_step, 1)}
     else:
@@ -132,29 +132,6 @@ def _build_light_trajectory(cond, args, src_idx, dst_idx, n_step, itp_func):
         interp_cond['light'][1:] = interp_cond['light'][1:] * args.scale_sh
 
     return interp_cond
-
-
-def _adjust_render_contrast(rendered_tmp, alpha_images, adjust_contrast):
-    """Optionally compresses DECA shading contrast toward the median face color (e.g., [0, 0] -> flat matted face)."""
-    down, up = adjust_contrast[0], adjust_contrast[1]
-    print(f"[#] Adjusting DECA render contrast: down={down}, up={up}")
-    alpha_mask = (th.cat(alpha_images).cpu().numpy() > 0.5)
-    alpha_mask = np.repeat(alpha_mask, 3, axis=1)  # [B, 3, H, W]
-
-    adjusted = []
-    for i in range(rendered_tmp.shape[0]):
-        r_tmp = rendered_tmp[i]
-        a_tmp = alpha_mask[i]
-        median = np.median(r_tmp[a_tmp], axis=0, keepdims=True)
-        above = (r_tmp > median) & a_tmp
-        below = (~(r_tmp > median)) & a_tmp
-
-        new_r = r_tmp.copy()
-        new_r[above] = (r_tmp[above] - median) * up + median
-        new_r[below] = (r_tmp[below] - median) * down + median
-        adjusted.append(np.clip(new_r, 0.0, 1.0))
-
-    return np.stack(adjusted, axis=0)
 
 
 def init_deca_modules(rasterize_type='pytorch3d', device='cuda'):
@@ -362,6 +339,7 @@ def _resolve_shadow_weights(cond, args, src_idx, dst_idx, n_step, device='cuda')
     n_target = n_step - 1
 
     # --- Mode 1: Reshadowing (interpolate shadow weight C on a fixed shadow mask) ---
+    # reshadow_with_given_c is not provided, use subject's src C as starting point
     if args.shadow_diff_inc_c:
         start_c = args.reshadow_with_given_c if args.reshadow_with_given_c is not None else c_norm_src
         print(f"[#] Shadow mode: Reshadow increase C ({start_c:.4f} -> 1.0 over {n_target} frames)")
@@ -374,10 +352,10 @@ def _resolve_shadow_weights(cond, args, src_idx, dst_idx, n_step, device='cuda')
         target_weights = th.linspace(start=start_c, end=0.0, steps=n_target, device=device)
         return target_weights.view(n_target, 1, 1, 1), True
 
-    if getattr(args, 'reshadow_gradually_inc_c', False):
-        print(f"[#] Shadow mode: Gradually increase C (0.0 -> 1.0 over {n_target} frames)")
-        target_weights = th.linspace(start=0.0, end=1.0, steps=n_target, device=device)
-        return target_weights.view(n_target, 1, 1, 1), True
+    # if getattr(args, 'reshadow_sweep_c', False):
+    #     print(f"[#] Shadow mode: Sweeping C (0.0 -> 1.0 over {n_target} frames)")
+    #     target_weights = th.linspace(start=0.0, end=1.0, steps=n_target, device=device)
+    #     return target_weights.view(n_target, 1, 1, 1), True
 
     # --- Mode 2: Relighting (apply target shadow scalar C to ray-traced target shadow masks) ---
     if args.relight_with_given_c is not None:

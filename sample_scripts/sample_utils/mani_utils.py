@@ -296,123 +296,12 @@ def rotate_sh(cond, src_idx, n_step, axis):
     return {"light": out_sh}
 
 
-def spiral_sh(cond, src_idx, n_step, light_traj_path):
-    """Rotate SH coefficients along a precomputed spiral trajectory."""
-    traj_data = np.load(light_traj_path, allow_pickle=True).item()
-    light_traj = traj_data["traj"]
-    light_params = traj_data["params"]
-    n_frames = len(light_traj)
-
-    a0 = 0
-    inp_sh = cond["light"][[src_idx]].flatten()
-    out_sh = [inp_sh]
-    ld = _sh_to_ld_np(np.array(inp_sh)[None, ...]).reshape(-1)
-    ld = ld / np.linalg.norm(ld)
-
-    sh_text_ref = (
-        "3.7764273 3.7647202 3.7740586 -0.45223573 -0.48492554 -0.48608136 "
-        "0.3177414 0.34008643 0.33421847 -0.44365892 -0.47285086 -0.45525044 "
-        "-0.27055222 -0.26994315 -0.2692122 -0.033267528 -0.047869906 -0.050032064 "
-        "0.16282524 0.17702723 0.172417 0.14684218 0.14223212 0.14653295 "
-        "0.2784819 0.27089873 0.27471355"
-    )
-    ld_ref = _sh_to_ld_np(np.array([float(x) for x in sh_text_ref.split(" ")])[None, ...]).reshape(-1)
-    ld_ref = ld_ref / np.linalg.norm(ld_ref)
-
-    theta_ref = np.arctan2(ld_ref[1], ld_ref[0])
-    theta_ld = np.arctan2(ld[1], ld[0])
-    rotation_angle = np.degrees(theta_ref - theta_ld)
-    print("[#] Aligning with reference light direction: ", rotation_angle)
-    inp_sh = _rotate_sh_vec(inp_sh, 0, 0, 1, -rotation_angle)
-
-    at = np.arctan2(ld[1], ld[0])
-    rchanged = np.degrees(
-        (np.arccos(light_params["radius_0"]) - np.arccos(light_params["radius_1"]))
-    ) / (light_params["n"] // 2)
-    print("[#] Degree changed per frame : ", rchanged)
-
-    angle = 0
-    for i in tqdm.tqdm(range(n_frames), desc=f"[#] Spiral SH using {light_traj_path}...", leave=False):
-        tt = light_traj[i]["rel_angle"] + a0
-        rr = light_traj[i]["rel_radius"]
-        if not np.isclose(rr, 0):
-            angle += rchanged * np.sign(-rr)
-
-        moved = _rotate_sh_vec(inp_sh.copy(), 0, 0, 1, at * 180 / np.pi)
-        moved = _rotate_sh_vec(moved, 0, 1, 0, -angle)
-        moved = _rotate_sh_vec(moved, 0, 0, 1, -at * 180 / np.pi)
-        moved = _rotate_sh_vec(moved, 0, 0, 1, tt * 180 / np.pi)
-        out_sh.append(np.array(moved))
-        a0 += light_traj[i]["rel_angle"]
-
-    out_sh = np.stack(out_sh, 0)
-    return {"light": out_sh}, n_frames
-
-
-def fancy_rotate_sh(cond, src_idx):
-    """Multi-stage roundtrip SH rotation trajectory."""
-    inp_sh = cond["light"][[src_idx]].flatten()
-    ld = _sh_to_ld_np(np.array(inp_sh)[None, ...]).reshape(-1)
-    ld = ld / np.linalg.norm(ld)
-
-    print("[#] Fancy rotating SH (Gradually Decrease C)...")
-    sh_text_ref = (
-        "3.7764273 3.7647202 3.7740586 -0.45223573 -0.48492554 -0.48608136 "
-        "0.3177414 0.34008643 0.33421847 -0.44365892 -0.47285086 -0.45525044 "
-        "-0.27055222 -0.26994315 -0.2692122 -0.033267528 -0.047869906 -0.050032064 "
-        "0.16282524 0.17702723 0.172417 0.14684218 0.14223212 0.14653295 "
-        "0.2784819 0.27089873 0.27471355"
-    )
-    ld_org_ref = _sh_to_ld_np(np.array([float(x) for x in sh_text_ref.split(" ")])[None, ...]).reshape(-1)
-    ld_org_ref = ld_org_ref / np.linalg.norm(ld_org_ref)
-
-    theta_ref = np.arctan2(ld_org_ref[1], ld_org_ref[0])
-    theta_ld = np.arctan2(ld[1], ld[0])
-    rotation_angle = np.degrees(theta_ref - theta_ld)
-    inp_sh_alg_a1 = _rotate_sh_vec(inp_sh.clone(), 0, 0, 1, -rotation_angle)
-    ld_a1 = _sh_to_ld_np(np.array(inp_sh_alg_a1)[None, ...]).reshape(-1)
-    ld_a1 = ld_a1 / np.linalg.norm(ld_a1)
-
-    n_rotate = 80
-    n_to_a2 = 40
-
-    def roundtrip_sh(inp, n_rot=60, inv=False):
-        rot_sh = []
-        deg_rot = np.linspace(0, 360, n_rot)
-        if inv:
-            deg_rot = deg_rot[::-1]
-        for j in deg_rot:
-            rot_sh.append(np.array(_rotate_sh_vec(inp, 0, 0, 1, j)))
-        return rot_sh + rot_sh[::-1]
-
-    first_rot_sh = roundtrip_sh(inp_sh_alg_a1.copy(), n_rot=n_rotate)
-
-    sh_a2_text_ref = (
-        "3.4063814 3.4182117 3.4240203 0.2447223 0.2731144 0.27873707 "
-        "0.36326286 0.37438118 0.37373984 -0.53145957 -0.511477 -0.49685538 "
-        "-0.02802198 -0.02605348 -0.025497597 0.15530688 0.17207308 0.17424926 "
-        "0.5655835 0.57417613 0.5728966 0.25129333 0.25584137 0.25848323 "
-        "0.7325827 0.7334002 0.73769367"
-    )
-    ld_a2_ref = _sh_to_ld_np(np.array([float(x) for x in sh_a2_text_ref.split(" ")])[None, ...]).reshape(-1)
-    ld_a2_ref = ld_a2_ref / np.linalg.norm(ld_a2_ref)
-    r_to_a2 = abs(np.degrees(np.arctan2(ld_a2_ref[1], ld_a2_ref[0]) - np.arctan2(ld_a1[1], ld_a1[0])))
-
-    alg_a2_sh = [np.array(_rotate_sh_vec(inp_sh_alg_a1.copy(), 0, 0, 1, j)) for j in np.linspace(0, r_to_a2, n_to_a2)]
-    second_rot_sh = roundtrip_sh(th.tensor(alg_a2_sh[-1]), n_rot=n_rotate, inv=True)
-    rot_to_a1_sh = [np.array(_rotate_sh_vec(th.tensor(alg_a2_sh[-1]), 0, 0, 1, -j)) for j in np.linspace(0, r_to_a2, n_to_a2)]
-
-    all_seq = [cond["light"][[src_idx]].flatten()] + first_rot_sh + alg_a2_sh + second_rot_sh + rot_to_a1_sh
-    all_sh = np.stack(all_seq, 0)
-    return {"light": all_sh}, all_sh.shape[0]
-
-
 # ==============================================================================
 # Dataset Pair Loading Utilities
 # ==============================================================================
 
 def _lookup_pair_indices(img_path, src_dst_pairs):
-    """Fast O(1) dictionary lookup for `[src, dst]` basename pairs in `img_path`."""
+    """Dictionary lookup for `[src, dst]` basename pairs in `img_path`."""
     name_to_idx = {os.path.basename(p): i for i, p in enumerate(img_path)}
     all_img_idx = []
     for sd in src_dst_pairs:

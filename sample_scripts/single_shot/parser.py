@@ -37,9 +37,9 @@ def build_parser():
     ren_group.add_argument('--rotate_sh', action='store_true', default=False, help='Rotate source SH lighting')
     ren_group.add_argument('--rotate_sh_dst', action='store_true', default=False, help='Rotate destination SH lighting')
     ren_group.add_argument('--rotate_sh_axis', type=int, default=0, help='SH rotation axis (0, 1, or 2)')
-    ren_group.add_argument('--force_diffuse_sh', action='store_true', default=False, help='Zero out directional SH bands for matted/diffuse DECA rendering')
+    ren_group.add_argument('--force_diffuse_shading_for_reshadow', action='store_true', default=False, help='Zero out directional SH bands for matted/diffuse DECA rendering')
+    ren_group.add_argument('--force_src_shading_for_reshadow', action='store_true', default=False, help='Keep source SH constant for reshadowing')
     ren_group.add_argument('--itp_diffuse_sh', action='store_true', default=False, help='Interpolate from src SH to diffuse SH')
-    ren_group.add_argument('--same_sh', action='store_true', default=False, help='Keep source SH constant across all frames')
     ren_group.add_argument('--scale_sh', type=float, default=1.0, help='Scale factor on target SH coefficients')
     ren_group.add_argument('--fixed_render', action='store_true', default=False, help='Lock DECA rendered shading across target frames')
     ren_group.add_argument('--fixed_shadow', action='store_true', default=False, help='Lock ray-traced shadow mask across target frames')
@@ -61,7 +61,7 @@ def build_parser():
     shad_group.add_argument('--shadow_diff_inc_c', action='store_true', default=False, help='Reshadow: linearly increase C toward 1.0 (max shadow)')
     shad_group.add_argument('--shadow_diff_dec_c', action='store_true', default=False, help='Reshadow: linearly decrease C toward 0.0 (diffuse)')
     shad_group.add_argument('--reshadow_with_given_c', type=float, default=None, help='Starting C value for reshadowing (default: src C)')
-    shad_group.add_argument('--reshadow_gradually_inc_c', action='store_true', default=False, help='Reshadow: linearly increase C from 0.0 to 1.0')
+    shad_group.add_argument('--reshadow_sweep_c', action='store_true', default=False, help='Reshadow: linearly increase C from 0.0 to 1.0')
 
     # --- Output & Misc ---
     out_group = parser.add_argument_group("Output & Misc")
@@ -75,7 +75,6 @@ def build_parser():
 
     # --- Legacy / No-Op Compatibility Flags (accepted so older CLI commands do not break) ---
     legacy_group = parser.add_argument_group("Legacy Compatibility Flags (No-Op)")
-    legacy_group.add_argument('--diffusion_steps', type=int, default=1000)
     legacy_group.add_argument('--postproc_shadow_mask_smooth', action='store_true', default=True)
     legacy_group.add_argument('--inverse_with_shadow_diff', action='store_true', default=True)
     legacy_group.add_argument('--render_same_mask', action='store_true', default=False)

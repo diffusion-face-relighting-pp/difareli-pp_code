@@ -204,11 +204,11 @@ def resolve_subject_dir(out_dir, src_id, dst_id):
     is_self_mani = (
         src_stem == dst_stem
         or args.rotate_sh
-        or args.force_diffuse_sh
-        or args.same_sh
+        or args.force_diffuse_shading_for_reshadow
+        or args.force_src_shading_for_reshadow
         or args.shadow_diff_inc_c
         or args.shadow_diff_dec_c
-        or args.reshadow_gradually_inc_c
+        # or args.reshadow_gradually_inc_c
     )
     subj_dir = os.path.join(out_dir, src_stem)
     if not is_self_mani and os.path.exists(subj_dir):
@@ -359,13 +359,6 @@ if __name__ == '__main__':
 
         f_relit = vis_utils.convert2rgb(out_relit, cfg.img_model.input_bound) / 255.0
         vis_utils.save_images(path=frames_dir, fn="res", frames=f_relit)
-
-        if args.eval_dir is not None:
-            eval_out = os.path.join(args.eval_dir, f"{args.ckpt_selector}_{args.step}", f"SD{args.scale_depth}", "out")
-            os.makedirs(eval_out, exist_ok=True)
-            torchvision.utils.save_image(
-                tensor=f_relit[-1], fp=os.path.join(eval_out, f"input={src_id}#pred={dst_id}.png")
-            )
 
         is_render = out_cond is not None
         is_shadow = (
