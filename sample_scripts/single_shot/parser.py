@@ -61,7 +61,6 @@ def build_parser():
     shad_group.add_argument('--shadow_diff_inc_c', action='store_true', default=False, help='Reshadow: linearly increase C toward 1.0 (max shadow)')
     shad_group.add_argument('--shadow_diff_dec_c', action='store_true', default=False, help='Reshadow: linearly decrease C toward 0.0 (diffuse)')
     shad_group.add_argument('--reshadow_with_given_c', type=float, default=None, help='Starting C value for reshadowing (default: src C)')
-    shad_group.add_argument('--reshadow_sweep_c', action='store_true', default=False, help='Reshadow: linearly increase C from 0.0 to 1.0')
 
     # --- Output & Misc ---
     out_group = parser.add_argument_group("Output & Misc")

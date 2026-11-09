@@ -206,7 +206,6 @@ def resolve_subject_dir(out_dir, src_id, dst_id):
         or args.force_src_shading_for_reshadow
         or args.shadow_diff_inc_c
         or args.shadow_diff_dec_c
-        or args.reshadow_sweep_c
     )
     if is_self_mani:
         return os.path.join(out_dir, src_stem)
