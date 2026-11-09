@@ -108,9 +108,6 @@ venv.bak/
 # mypy
 .mypy_cache/
 
-# res
-res/
-
 .idea/
 
 ./ITW/
@@ -137,10 +134,10 @@ misc/myset2
 dataset_generation/prepare_relighting_data/misc/myset2
 examples/dat/face_segment
 examples/dat/face_segment_with_pupil
-examples/dat/rendered_images/
-examples/dat/reshadow/
+examples/dat/rendered_images
+examples/dat/reshadow
 examples/dat/params
 examples/res/relight
 examples/res/reshadow
-examples/res/runtime*
+examples/res/runtime_*
 
