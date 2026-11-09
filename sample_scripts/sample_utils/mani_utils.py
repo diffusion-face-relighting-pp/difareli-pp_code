@@ -173,7 +173,6 @@ def create_cond_params(cond, key):
             tmp.append(cond[p])
     if tmp:
         cond_params = np.concatenate(tmp, axis=1)
-        print(cond_params.shape)
         cond["cond_params"] = cond_params
     return cond
 
@@ -183,7 +182,6 @@ def create_cond_imgs(cond, key):
     print("[#] Condition build from image(s) in ", key)
     tmp = [cond[p].cpu() if th.is_tensor(cond[p]) else cond[p] for p in key]
     cond_img = np.concatenate(tmp, axis=1)
-    print(cond_img.shape)
     cond["cond_img"] = cond_img
     return cond
 

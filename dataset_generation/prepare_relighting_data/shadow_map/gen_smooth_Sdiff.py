@@ -148,9 +148,9 @@ def resolve_reshadow_frames_dir(base_dir, mode_key, ckpt, set_name, n_frames, mo
             if not os.path.isdir(subj_dir):
                 continue
             stem = os.path.splitext(entry)[0]
-            if os.path.exists(os.path.join(subj_dir, 'res_frame0.png')):
+            if glob.glob(os.path.join(subj_dir, 'res_frame*.png')):
                 frame_map[stem] = subj_dir
-            elif os.path.exists(os.path.join(subj_dir, 'frames', 'res_frame0.png')):
+            elif glob.glob(os.path.join(subj_dir, 'frames', 'res_frame*.png')):
                 frame_map[stem] = os.path.join(subj_dir, 'frames')
         if frame_map:
             return frame_map
@@ -172,7 +172,7 @@ def resolve_reshadow_frames_dir(base_dir, mode_key, ckpt, set_name, n_frames, mo
         for match_dir in (filtered_matches or all_matches):
             if ckpt and ckpt not in match_dir:
                 continue
-            if not os.path.exists(os.path.join(match_dir, 'res_frame0.png')):
+            if not glob.glob(os.path.join(match_dir, 'res_frame*.png')):
                 continue
             src_matches = re.findall(r'src=([^/]+)', match_dir)
             if src_matches:
@@ -198,6 +198,21 @@ def load_shadow_scores(shadow_anno_path):
     return c_dict
 
 
+def _load_reshadow_frames(frames_dir, n_frames):
+    """Loads res_frame0..{n_frames-1}.png, falling back to available res_frame*.png if only final/subset frames exist."""
+    exact_paths = [os.path.join(frames_dir, f'res_frame{i}.png') for i in range(n_frames)]
+    if all(os.path.exists(p) for p in exact_paths):
+        return [Image.open(p) for p in exact_paths]
+
+    avail = sorted(
+        glob.glob(os.path.join(frames_dir, 'res_frame*.png')),
+        key=lambda p: [int(t) if t.isdigit() else t for t in re.split(r'(\d+)', os.path.basename(p))],
+    )
+    if not avail:
+        raise FileNotFoundError(f"No res_frame*.png files found in {frames_dir}")
+    return [Image.open(p) for p in avail]
+
+
 def process_smooth_shadow_diff(
     shadow_frames_dir,
     diffuse_frames_dir,
@@ -221,8 +236,10 @@ def process_smooth_shadow_diff(
     img_name = os.path.basename(face_img_path)
     img_stem = os.path.splitext(img_name)[0]
 
-    shadow = [Image.open(os.path.join(shadow_frames_dir, f'res_frame{i}.png')) for i in range(n_frames_shadow)]
-    diffuse = [Image.open(os.path.join(diffuse_frames_dir, f'res_frame{i}.png')) for i in range(n_frames_diffuse)]
+    shadow = _load_reshadow_frames(shadow_frames_dir, n_frames_shadow)
+    diffuse = _load_reshadow_frames(diffuse_frames_dir, n_frames_diffuse)
+    n_frames_shadow = len(shadow)
+    n_frames_diffuse = len(diffuse)
     face = Image.open(face_img_path)
 
     # Mask

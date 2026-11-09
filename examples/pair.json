@@ -1,0 +1,12 @@
+{
+    "pair": {
+        "pair1": {
+            "src": "max.png",
+            "dst": "61992.png"
+        },
+        "pair2": {
+            "src": "61992.png",
+            "dst": "max.png"
+        }
+    }
+}

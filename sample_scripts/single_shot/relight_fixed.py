@@ -194,26 +194,23 @@ def save_video_pair(video_tensor, vid_dir, prefix, fps, exclude_first=False):
 
 def resolve_subject_dir(out_dir, src_id, dst_id):
     """
-    Returns `<out_dir>/<src_stem>` by default.
-    If transferring lighting between two distinct subjects (`src != dst` and not a self-manipulation
-    mode like rotate_sh / force_diffuse_sh / reshadow) and `<out_dir>/<src_stem>` already exists,
-    falls back to `<out_dir>/<src_stem>_to_<dst_stem>` to avoid overwriting.
+    Returns `<out_dir>/<src_stem>` for single-subject manipulation modes
+    (e.g., rotate_sh, reshadowing, diffuse/src shading) and
+    `<out_dir>/<src_stem>_to_<dst_stem>` for paired target-SH relighting.
     """
     src_stem = os.path.splitext(src_id)[0]
     dst_stem = os.path.splitext(dst_id)[0]
     is_self_mani = (
-        src_stem == dst_stem
-        or args.rotate_sh
+        args.rotate_sh
         or args.force_diffuse_shading_for_reshadow
         or args.force_src_shading_for_reshadow
         or args.shadow_diff_inc_c
         or args.shadow_diff_dec_c
-        # or args.reshadow_gradually_inc_c
+        or args.reshadow_sweep_c
     )
-    subj_dir = os.path.join(out_dir, src_stem)
-    if not is_self_mani and os.path.exists(subj_dir):
-        subj_dir = os.path.join(out_dir, f"{src_stem}_to_{dst_stem}")
-    return subj_dir
+    if is_self_mani:
+        return os.path.join(out_dir, src_stem)
+    return os.path.join(out_dir, f"{src_stem}_to_{dst_stem}")
 
 
 if __name__ == '__main__':

@@ -20,13 +20,13 @@ def build_parser():
     samp_group = parser.add_argument_group("Sample Selection & Interpolation")
     samp_group.add_argument('--idx', nargs=2, type=int, default=[0, 99999], help='Start and end sample pair indices')
     samp_group.add_argument('--sample_pair_json', type=str, default=None, help='JSON file defining src/dst pairs')
-    samp_group.add_argument('--sample_pair_mode', type=str, default=None, help='Pairing mode (e.g., pair)')
+    samp_group.add_argument('--sample_pair_mode', type=str, default='pair', help='Pairing mode (e.g., pair)')
     samp_group.add_argument('--src_dst', nargs='+', default=[], help='Explicit [src, dst] image names')
     samp_group.add_argument('--itp', nargs='+', default=['render_face'], help='Interpolation targets')
     samp_group.add_argument('--itp_step', type=int, default=15, help='Number of interpolation steps (frames)')
     samp_group.add_argument('--batch_size', type=int, default=15, help='Inference sub-batch size')
-    samp_group.add_argument('--render_batch_size', type=int, default=15, help='DECA & shadow ray-tracing batch size')
-    samp_group.add_argument('--lerp', action='store_true', default=False, help='Use linear interpolation')
+    samp_group.add_argument('--render_batch_size', type=int, default=60, help='DECA & shadow ray-tracing batch size')
+    samp_group.add_argument('--lerp', action='store_true', default=True, help='Use linear interpolation (default)')
     samp_group.add_argument('--slerp', action='store_true', default=False, help='Use spherical linear interpolation')
 
     # --- Lighting & 3D Rendering ---

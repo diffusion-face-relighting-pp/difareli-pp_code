@@ -61,15 +61,9 @@ def get_R_normals(n_step):
     rvec_f = np.linspace(src, dst, fh)
     
     src = rvec_f[-1]
-    # dst = np.array([0, rvec_f[-1][1], -8.00])
     dst = np.array([0, 2.50, -8.00])
     rvec_s = np.linspace(rvec_f[-1], dst, sh)
-    # print(rvec_f.shape, rvec_s.shape)
     rvec = np.concatenate((rvec_f, rvec_s), axis=0)
-    # print(rvec_f)
-    # print(rvec_s)
-    # print(rvec)
-    # print(rvec.shape)
     R = [cv2.Rodrigues(rvec[i])[0] for i in range(rvec.shape[0])]
     R = np.stack(R, axis=0)
     return R
@@ -383,3 +377,16 @@ def write_params(path, params, keys):
             
     np.save(file=path, arr=tmp)
         
+def get_params_set(set, params_key, path):
+    if set == 'valid' or set == 'train':
+        # Load params
+        if params_key is None:
+            params_key = ['shape', 'pose', 'exp', 'cam', 'light', 'faceemb']
+            params, params_arr = load_params(path=f"{path}/{set}/", params_key=params_key)
+            params_set = params
+        else:
+            raise NotImplementedError
+
+    else: raise NotImplementedError
+
+    return params_set

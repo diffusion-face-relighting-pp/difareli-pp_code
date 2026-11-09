@@ -56,15 +56,17 @@ def parse_run_dir(run_dir, root_dir, default_dataset_root, default_set):
     layout from relight_fixed.py or legacy `.../src=<src>/dst=<dst>/Lerp_*/n_frames=*/` layout).
     """
     frames_dir = os.path.join(run_dir, "frames")
-    is_new_layout = os.path.isdir(frames_dir)
-    if not is_new_layout:
+    vid_subdir = os.path.join(run_dir, "vid")
+    is_new_layout = os.path.isdir(frames_dir) or os.path.isdir(vid_subdir)
+    if not os.path.isdir(frames_dir):
         frames_dir = run_dir
 
-    res_frames = sort_by_frame(glob.glob(os.path.join(frames_dir, "res_frame*.png")))
-    if not res_frames:
-        return None
+    vid_dir = vid_subdir if os.path.isdir(vid_subdir) else run_dir
 
-    vid_dir = os.path.join(run_dir, "vid") if os.path.isdir(os.path.join(run_dir, "vid")) else run_dir
+    res_frames = sort_by_frame(glob.glob(os.path.join(frames_dir, "res_frame*.png")))
+    all_mp4s = sorted(glob.glob(os.path.join(vid_dir, "*.mp4"))) or sorted(glob.glob(os.path.join(run_dir, "*.mp4")))
+    if not res_frames and not all_mp4s:
+        return None
 
     desc = {}
     desc_path = os.path.join(run_dir, "res_desc.json")
@@ -127,11 +129,16 @@ def parse_run_dir(run_dir, root_dir, default_dataset_root, default_set):
     dst_shad_frames = sort_by_frame(glob.glob(os.path.join(frames_dir, "dst_shadm_shad_frame*.png")))
 
     res_vid = None
-    for vname in ("res_rt.mp4", "res.mp4", "out_rt.mp4", "out.mp4"):
-        vpath = os.path.join(vid_dir, vname)
-        if os.path.isfile(vpath):
-            res_vid = vpath
+    for search_vdir in (vid_dir, run_dir):
+        for vname in ("res_rt.mp4", "res.mp4", "out_rt.mp4", "out.mp4"):
+            vpath = os.path.join(search_vdir, vname)
+            if os.path.isfile(vpath):
+                res_vid = vpath
+                break
+        if res_vid:
             break
+    if not res_vid and all_mp4s:
+        res_vid = all_mp4s[0]
 
     return {
         "subj_key": subj_key,
@@ -158,6 +165,11 @@ def discover_runs(root_dir, default_dataset_root, default_set):
             candidate_dirs.add(dirpath)
         elif any(f.startswith("res_frame") and f.endswith(".png") for f in filenames):
             if os.path.basename(dirpath) == "frames":
+                candidate_dirs.add(os.path.dirname(dirpath))
+            else:
+                candidate_dirs.add(dirpath)
+        elif any(f.endswith(".mp4") for f in filenames):
+            if os.path.basename(dirpath) == "vid":
                 candidate_dirs.add(os.path.dirname(dirpath))
             else:
                 candidate_dirs.add(dirpath)
@@ -190,7 +202,8 @@ def create_app(args):
 
     @app.route("/")
     def root():
-        root_dir = request.args.get("dir", args.root_dir)
+        root_dir = os.path.abspath(request.args.get("dir", args.root_dir))
+        dataset_root = os.path.abspath(args.dataset_root) if args.dataset_root else None
         sub_filter = request.args.get("sub", "")
         group_by = request.args.get("group_by", "subject")  # 'subject' or 'model'
         ds = int(request.args.get("ds", args.ds))
@@ -200,8 +213,8 @@ def create_app(args):
         show_shadm = request.args.get("show_shadm", "False") == "True"
 
         search_dir = os.path.join(root_dir, sub_filter) if sub_filter else root_dir
-        all_runs = discover_runs(root_dir, args.dataset_root, args.set_)
-        runs = discover_runs(search_dir, args.dataset_root, args.set_) if sub_filter else all_runs
+        all_runs = discover_runs(root_dir, dataset_root, args.set_)
+        runs = discover_runs(search_dir, dataset_root, args.set_) if sub_filter else all_runs
 
         out = """<html><head><title>DiFaReli++ Visualization</title>
         <style>

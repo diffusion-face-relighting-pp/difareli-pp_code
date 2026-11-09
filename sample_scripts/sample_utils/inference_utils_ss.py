@@ -342,37 +342,29 @@ def _resolve_shadow_weights(cond, args, src_idx, dst_idx, n_step, device='cuda')
     # reshadow_with_given_c is not provided, use subject's src C as starting point
     if args.shadow_diff_inc_c:
         start_c = args.reshadow_with_given_c if args.reshadow_with_given_c is not None else c_norm_src
-        print(f"[#] Shadow mode: Reshadow increase C ({start_c:.4f} -> 1.0 over {n_target} frames)")
+        print(f"[#] ReShadow mode: Reshadow increase C ({start_c:.4f} -> 1.0 over {n_target} frames)")
         target_weights = th.linspace(start=start_c, end=1.0, steps=n_target, device=device)
         return target_weights.view(n_target, 1, 1, 1), True
 
     if args.shadow_diff_dec_c:
         start_c = args.reshadow_with_given_c if args.reshadow_with_given_c is not None else c_norm_src
-        print(f"[#] Shadow mode: Reshadow decrease C ({start_c:.4f} -> 0.0 over {n_target} frames)")
+        print(f"[#] ReShadow mode: Reshadow decrease C ({start_c:.4f} -> 0.0 over {n_target} frames)")
         target_weights = th.linspace(start=start_c, end=0.0, steps=n_target, device=device)
         return target_weights.view(n_target, 1, 1, 1), True
-
-    # if getattr(args, 'reshadow_sweep_c', False):
-    #     print(f"[#] Shadow mode: Sweeping C (0.0 -> 1.0 over {n_target} frames)")
-    #     target_weights = th.linspace(start=0.0, end=1.0, steps=n_target, device=device)
-    #     return target_weights.view(n_target, 1, 1, 1), True
 
     # --- Mode 2: Relighting (apply target shadow scalar C to ray-traced target shadow masks) ---
     if args.relight_with_given_c is not None:
         val_c = float(args.relight_with_given_c)
-        print(f"[#] Shadow mode: Relight with given C = {val_c:.4f}")
+        print(f"[#] Relight mode: with given C = {val_c:.4f}")
     elif args.relight_with_dst_c:
         val_c = c_norm_dst
-        print(f"[#] Shadow mode: Relight with dst C = {val_c:.4f}")
-    elif args.relight_with_rand_max_c:
-        val_c = float(np.random.uniform(0.7, 1.0))
-        print(f"[#] Shadow mode: Relight with random C in [0.7, 1.0] = {val_c:.4f}")
+        print(f"[#] Relight mode: with subject's dst C = {val_c:.4f}")
     elif getattr(args, 'relight_with_strongest_c', False):
         val_c = 1.0
-        print("[#] Shadow mode: Relight with strongest C = 1.0")
+        print("[#] Relight mode: with strongest C = 1.0")
     else:
         val_c = c_norm_src
-        print(f"[#] Shadow mode: Relight with src C = {val_c:.4f}")
+        print(f"[#] Relight mode: with src C = {val_c:.4f}")
 
     target_weights = th.full((n_target, 1, 1, 1), val_c, device=device, dtype=th.float32)
     return target_weights, False

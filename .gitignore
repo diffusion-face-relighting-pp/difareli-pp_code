@@ -135,3 +135,9 @@ misc/myset2
 **/diffae/checkpoints/
 **/diffae/datasets/celeba_anno/
 dataset_generation/prepare_relighting_data/misc/myset2
+examples/dat/face_segment
+examples/dat/face_segment_with_pupil
+examples/dat/rendered_images/
+examples/dat/reshadow/
+examples/dat/params
+examples/res/
