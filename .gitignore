@@ -140,4 +140,7 @@ examples/dat/face_segment_with_pupil
 examples/dat/rendered_images/
 examples/dat/reshadow/
 examples/dat/params
-examples/res/
+examples/res/relight
+examples/res/reshadow
+examples/res/runtime*
+
