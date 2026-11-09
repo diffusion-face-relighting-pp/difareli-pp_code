@@ -31,32 +31,32 @@ Official repository for **DiFaReli++**, providing end-to-end preprocessing, spat
 ## 1. Visual Results Gallery
 
 ### 1.1 Cast-Shadow Manipulation (Reshadowing Sweep)
-Sweeping the cast-shadow scalar $C$ continuously from **diffuse / shadow-free ($C = 0$)** (`--shadow_diff_dec_c`) to **strongest cast shadow ($C = 1$)** (`--shadow_diff_inc_c`):
+Sweeping the cast-shadow scalar $C$ continuously from **diffuse / shadow-free ($C = 0$)** (`--shadow_diff_dec_c`, reversed `[res_frame[-1], ..., res_frame[1]]`) to **strongest cast shadow ($C = 1$)** (`--shadow_diff_inc_c`, `[res_frame[1], ..., res_frame[-1]]`):
 
-| Subject | Relit Sweep (`Diffuse <-> Shadow`) | Conditioning & Output (`Input \| Weighted Shadow Map \| Relit`) |
-| :---: | :---: | :---: |
-| **`61992`** | ![sweep_61992_res](examples/res/gifs/reshadow/sweep_61992_res.gif) | ![sweep_61992_comp](examples/res/gifs/reshadow/sweep_61992_comp.gif) |
-| **`max`** | ![sweep_max_res](examples/res/gifs/reshadow/sweep_max_res.gif) | ![sweep_max_comp](examples/res/gifs/reshadow/sweep_max_comp.gif) |
+| Input Image | Output & Conditioning (`Relit \| Shadow`) |
+| :---: | :---: |
+| ![61992](examples/dat/images_aligned/valid/61992.png)<br>**`61992`** | ![sweep_61992_relit_shadow](examples/res/gifs/reshadow/sweep_61992_relit_shadow.gif) |
+| ![max](examples/dat/images_aligned/valid/max.png)<br>**`max`** | ![sweep_max_relit_shadow](examples/res/gifs/reshadow/sweep_max_relit_shadow.gif) |
 
 ---
 
 ### 1.2 Rotating Spherical Harmonics Lighting (`rotateSH`)
 Rotating the 3D Spherical Harmonics (SH) lighting around axis 2 (`--rotate_sh --rotate_sh_axis 2`) with controlled cast-shadow intensity (`--relight_with_given_c 0.9`):
 
-| Subject | Relit Output | Conditioning & Output (`Input \| Rotated Shading \| Ray-Traced Shadow \| Relit`) |
-| :---: | :---: | :---: |
-| **`61992`** | ![rotateSH_61992_res](examples/res/gifs/rotateSH/rotateSH_61992_res.gif) | ![rotateSH_61992_comp](examples/res/gifs/rotateSH/rotateSH_61992_comp.gif) |
-| **`max`** | ![rotateSH_max_res](examples/res/gifs/rotateSH/rotateSH_max_res.gif) | ![rotateSH_max_comp](examples/res/gifs/rotateSH/rotateSH_max_comp.gif) |
+| Input Image | Output & Conditioning (`Relit \| Shadow \| Shading`) |
+| :---: | :---: |
+| ![61992](examples/dat/images_aligned/valid/61992.png)<br>**`61992`** | ![rotateSH_61992_relit_shadow_shading](examples/res/gifs/rotateSH/rotateSH_61992_relit_shadow_shading.gif) |
+| ![max](examples/dat/images_aligned/valid/max.png)<br>**`max`** | ![rotateSH_max_relit_shadow_shading](examples/res/gifs/rotateSH/rotateSH_max_relit_shadow_shading.gif) |
 
 ---
 
 ### 1.3 Target-SH Relighting (`targetSH`)
 Interpolating lighting and cast shadows from a source portrait (`src`) to match a target reference portrait (`dst`) (`--relight_with_dst_c`):
 
-| Pair (`src -> dst`) | Relit Output | Conditioning & Output (`Src \| Target Dst \| Target Shading \| Target Shadow \| Relit`) |
-| :---: | :---: | :---: |
-| **`61992 -> max`** | ![targetSH_61992_to_max_res](examples/res/gifs/targetSH/targetSH_61992_to_max_res.gif) | ![targetSH_61992_to_max_comp](examples/res/gifs/targetSH/targetSH_61992_to_max_comp.gif) |
-| **`max -> 61992`** | ![targetSH_max_to_61992_res](examples/res/gifs/targetSH/targetSH_max_to_61992_res.gif) | ![targetSH_max_to_61992_comp](examples/res/gifs/targetSH/targetSH_max_to_61992_comp.gif) |
+| Input Image (`Src \| Dst`) | Output & Conditioning (`Relit \| Shadow \| Shading`) |
+| :---: | :---: |
+| ![61992](examples/dat/images_aligned/valid/61992.png) ![max](examples/dat/images_aligned/valid/max.png)<br>**`61992 -> max`** | ![targetSH_61992_to_max_relit_shadow_shading](examples/res/gifs/targetSH/targetSH_61992_to_max_relit_shadow_shading.gif) |
+| ![max](examples/dat/images_aligned/valid/max.png) ![61992](examples/dat/images_aligned/valid/61992.png)<br>**`max -> 61992`** | ![targetSH_max_to_61992_relit_shadow_shading](examples/res/gifs/targetSH/targetSH_max_to_61992_relit_shadow_shading.gif) |
 
 ---
 
@@ -529,14 +529,14 @@ examples/res/
 │
 └── gifs/                                    # High-quality showcase GIFs
     ├── reshadow/
-    │   ├── sweep_61992_res.gif, sweep_61992_comp.gif
-    │   └── sweep_max_res.gif, sweep_max_comp.gif
+    │   ├── sweep_61992_relit_shadow.gif
+    │   └── sweep_max_relit_shadow.gif
     ├── rotateSH/
-    │   ├── rotateSH_61992_res.gif, rotateSH_61992_comp.gif
-    │   └── rotateSH_max_res.gif, rotateSH_max_comp.gif
+    │   ├── rotateSH_61992_relit_shadow_shading.gif
+    │   └── rotateSH_max_relit_shadow_shading.gif
     └── targetSH/
-        ├── targetSH_61992_to_max_res.gif, targetSH_61992_to_max_comp.gif
-        └── targetSH_max_to_61992_res.gif, targetSH_max_to_61992_comp.gif
+        ├── targetSH_61992_to_max_relit_shadow_shading.gif
+        └── targetSH_max_to_61992_relit_shadow_shading.gif
 ```
 
 ---
