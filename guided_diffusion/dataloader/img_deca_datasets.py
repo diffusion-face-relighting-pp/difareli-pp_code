@@ -534,10 +534,6 @@ class DECADataset(Dataset):
             seg_m = (~eye_g & face)
         elif segment_part == 'faceseg_face_noglasses_noeyes':
             seg_m = (~(l_eye | r_eye) & ~eye_g & face)
-        elif segment_part in ['sobel_bg_mask', 'laplacian_bg_mask', 'sobel_bin_bg_mask']:
-            seg_m = ~(face | neck | hair)
-        elif segment_part in ['canny_edge_bg_mask']:
-            seg_m = ~(face | neck | hair) | (l_ear | r_ear)
         else: raise NotImplementedError(f"Segment part: {segment_part} is not found!")
         
         out = seg_m
