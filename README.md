@@ -7,7 +7,7 @@ Official repository for **DiFaReli++**, providing end-to-end preprocessing, spat
 ## Table of Contents
 
 - [1. Visual Results Gallery](#1-visual-results-gallery)
-  - [1.1 Cast-Shadow Manipulation (Reshadowing Sweep)](#11-cast-shadow-manipulation-reshadowing-sweep)
+  - [1.1 Cast-Shadow Manipulation (Reshadowing)](#11-cast-shadow-manipulation-reshadowing)
   - [1.2 Rotating Spherical Harmonics Lighting (`rotateSH`)](#12-rotating-spherical-harmonics-lighting-rotatesh)
   - [1.3 Target-SH Relighting (`targetSH`)](#13-target-sh-relighting-targetsh)
 - [2. Prerequisites](#2-prerequisites)
@@ -30,33 +30,33 @@ Official repository for **DiFaReli++**, providing end-to-end preprocessing, spat
 
 ## 1. Visual Results Gallery
 
-### 1.1 Cast-Shadow Manipulation (Reshadowing Sweep)
-Sweeping the cast-shadow scalar $C$ continuously from **diffuse / shadow-free ($C = 0$)** (`--shadow_diff_dec_c`, reversed `[res_frame[-1], ..., res_frame[1]]`) to **strongest cast shadow ($C = 1$)** (`--shadow_diff_inc_c`, `[res_frame[1], ..., res_frame[-1]]`):
+### 1.1 Cast-Shadow Manipulation (Reshadowing)
+Interpolating the cast-shadow scalar $C$ toward **maximum shadow** (`--shadow_diff_inc_c`) or **diffuse / shadow-free** (`--shadow_diff_dec_c`):
 
-| Input Image | Output & Conditioning (`Relit \| Shadow`) |
-| :---: | :---: |
-| ![61992](examples/dat/images_aligned/valid/61992.png)<br>**`61992`** | ![sweep_61992_relit_shadow](examples/res/gifs/reshadow/sweep_61992_relit_shadow.gif) |
-| ![max](examples/dat/images_aligned/valid/max.png)<br>**`max`** | ![sweep_max_relit_shadow](examples/res/gifs/reshadow/sweep_max_relit_shadow.gif) |
+| Input | Strengthen (`Relit \| Shadow`) | Diffuse (`Relit \| Shadow`) |
+| :---: | :---: | :---: |
+| <img src="examples/dat/images_aligned/valid/61992.png" height="128"> | <img src="examples/res/gifs/reshadow/shadow_61992_relit_shadow.gif" height="128"> | <img src="examples/res/gifs/reshadow/diffuse_61992_relit_shadow.gif" height="128"> |
+| <img src="examples/dat/images_aligned/valid/max.png" height="128"> | <img src="examples/res/gifs/reshadow/shadow_max_relit_shadow.gif" height="128"> | <img src="examples/res/gifs/reshadow/diffuse_max_relit_shadow.gif" height="128"> |
 
 ---
 
 ### 1.2 Rotating Spherical Harmonics Lighting (`rotateSH`)
 Rotating the 3D Spherical Harmonics (SH) lighting around axis 2 (`--rotate_sh --rotate_sh_axis 2`) with controlled cast-shadow intensity (`--relight_with_given_c 0.9`):
 
-| Input Image | Output & Conditioning (`Relit \| Shadow \| Shading`) |
+| Input | Output & Conditioning (`Relit \| Shadow \| Shading`) |
 | :---: | :---: |
-| ![61992](examples/dat/images_aligned/valid/61992.png)<br>**`61992`** | ![rotateSH_61992_relit_shadow_shading](examples/res/gifs/rotateSH/rotateSH_61992_relit_shadow_shading.gif) |
-| ![max](examples/dat/images_aligned/valid/max.png)<br>**`max`** | ![rotateSH_max_relit_shadow_shading](examples/res/gifs/rotateSH/rotateSH_max_relit_shadow_shading.gif) |
+| <img src="examples/dat/images_aligned/valid/61992.png" height="128"> | <img src="examples/res/gifs/rotateSH/rotateSH_61992_relit_shadow_shading.gif" height="128"> |
+| <img src="examples/dat/images_aligned/valid/max.png" height="128"> | <img src="examples/res/gifs/rotateSH/rotateSH_max_relit_shadow_shading.gif" height="128"> |
 
 ---
 
 ### 1.3 Target-SH Relighting (`targetSH`)
 Interpolating lighting and cast shadows from a source portrait (`src`) to match a target reference portrait (`dst`) (`--relight_with_dst_c`):
 
-| Input Image (`Src \| Dst`) | Output & Conditioning (`Relit \| Shadow \| Shading`) |
+| Input (`Src \| Dst`) | Output & Conditioning (`Relit \| Shadow \| Shading`) |
 | :---: | :---: |
-| ![61992](examples/dat/images_aligned/valid/61992.png) ![max](examples/dat/images_aligned/valid/max.png)<br>**`61992 -> max`** | ![targetSH_61992_to_max_relit_shadow_shading](examples/res/gifs/targetSH/targetSH_61992_to_max_relit_shadow_shading.gif) |
-| ![max](examples/dat/images_aligned/valid/max.png) ![61992](examples/dat/images_aligned/valid/61992.png)<br>**`max -> 61992`** | ![targetSH_max_to_61992_relit_shadow_shading](examples/res/gifs/targetSH/targetSH_max_to_61992_relit_shadow_shading.gif) |
+| <img src="examples/dat/images_aligned/valid/61992.png" height="128"> <img src="examples/dat/images_aligned/valid/max.png" height="128"> | <img src="examples/res/gifs/targetSH/targetSH_61992_to_max_relit_shadow_shading.gif" height="128"> |
+| <img src="examples/dat/images_aligned/valid/max.png" height="128"> <img src="examples/dat/images_aligned/valid/61992.png" height="128"> | <img src="examples/res/gifs/targetSH/targetSH_max_to_61992_relit_shadow_shading.gif" height="128"> |
 
 ---
 
@@ -529,8 +529,10 @@ examples/res/
 │
 └── gifs/                                    # High-quality showcase GIFs
     ├── reshadow/
-    │   ├── sweep_61992_relit_shadow.gif
-    │   └── sweep_max_relit_shadow.gif
+    │   ├── shadow_61992_relit_shadow.gif
+    │   ├── shadow_max_relit_shadow.gif
+    │   ├── diffuse_61992_relit_shadow.gif
+    │   └── diffuse_max_relit_shadow.gif
     ├── rotateSH/
     │   ├── rotateSH_61992_relit_shadow_shading.gif
     │   └── rotateSH_max_relit_shadow_shading.gif
