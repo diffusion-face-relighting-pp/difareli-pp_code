@@ -1,0 +1,19 @@
+name: ffhq_env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - cmake
+  - pip:
+      - certifi==2026.10.23
+      - charset-normalizer==3.5.2
+      - dlib==20.0.1
+      - idna==3.20
+      - numpy==2.2.6
+      - pillow==12.3.0
+      - requests==2.34.2
+      - scipy==1.15.3
+      - tqdm==4.70.1
+      - urllib3==2.8.0

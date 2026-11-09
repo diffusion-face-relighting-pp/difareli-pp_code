@@ -1,24 +1,46 @@
 # DiFaReli++: Single-Shot Diffusion Face Relighting & Cast-Shadow Manipulation
 
-Official repository for **DiFaReli++**, providing end-to-end preprocessing, spatial shadow map estimation, and single-shot facial relighting / shadow manipulation.
+Official repository for **DiFaReli++**, providing end-to-end preprocessing, spatial shadow map estimation, and single-shot facial relighting and cast-shadow manipulation.
 
 ---
 
-## Visual Results Gallery
+## Table of Contents
 
-### 1. Shadow Manipulation (Reshadowing)
- Interpolating the cast-shadow scalar $C$ toward **maximum shadow** (`--shadow_diff_inc_c`) or **diffuse / shadow-free** (`--shadow_diff_dec_c`):
+- [1. Visual Results Gallery](#1-visual-results-gallery)
+  - [1.1 Cast-Shadow Manipulation (Reshadowing Sweep)](#11-cast-shadow-manipulation-reshadowing-sweep)
+  - [1.2 Rotating Spherical Harmonics Lighting (`rotateSH`)](#12-rotating-spherical-harmonics-lighting-rotatesh)
+  - [1.3 Target-SH Relighting (`targetSH`)](#13-target-sh-relighting-targetsh)
+- [2. Prerequisites](#2-prerequisites)
+  - [2.1 Conda Environments](#21-conda-environments)
+  - [2.2 Pretrained Checkpoints & Model Weights](#22-pretrained-checkpoints--model-weights)
+- [3. Preparing the Data](#3-preparing-the-data)
+  - [3.1 Step 1: Place Raw Input Images](#31-step-1-place-raw-input-images)
+  - [3.2 Step 2: Run Dataset Preprocessing (`create_dataset.py`)](#32-step-2-run-dataset-preprocessing-create_datasetpy)
+  - [3.3 Step 3: Compute Smooth Spatial Shadow Maps (`gen_smooth_Sdiff.py`)](#33-step-3-compute-smooth-spatial-shadow-maps-gen_smooth_sdiffpy)
+- [4. Inference (`inference.py`)](#4-inference-inferencepy)
+  - [4.1 Reshadowing (Strengthen Shadow & Diffuse Shadow)](#41-reshadowing-strengthen-shadow--diffuse-shadow)
+  - [4.2 Rotate SH Lighting (`rotateSH`)](#42-rotate-sh-lighting-rotatesh)
+  - [4.3 Target-SH Relighting (`targetSH`)](#43-target-sh-relighting-targetsh)
+  - [4.4 Useful CLI Arguments (`inference.py`)](#44-useful-cli-arguments-inferencepy)
+  - [4.5 Output Folder Structure](#45-output-folder-structure)
+  - [4.6 Interactive Web Visualization (`vis.py`)](#46-interactive-web-visualization-vispy)
+- [5. Training](#5-training)
 
-| Subject | Strengthen Shadow (`--shadow_diff_inc_c`) | Diffuse / Remove Shadow (`--shadow_diff_dec_c`) |
+---
+
+## 1. Visual Results Gallery
+
+### 1.1 Cast-Shadow Manipulation (Reshadowing Sweep)
+Sweeping the cast-shadow scalar $C$ continuously from **diffuse / shadow-free ($C = 0$)** (`--shadow_diff_dec_c`) to **strongest cast shadow ($C = 1$)** (`--shadow_diff_inc_c`):
+
+| Subject | Relit Sweep (`Diffuse <-> Shadow`) | Conditioning & Output (`Input \| Weighted Shadow Map \| Relit`) |
 | :---: | :---: | :---: |
-| **`61992`**<br>*(Relit Output)* | ![shadow_61992_res](examples/res/gifs/reshadow/shadow_61992_res.gif) | ![diffuse_61992_res](examples/res/gifs/reshadow/diffuse_61992_res.gif) |
-| **`61992`**<br>*(Input \| Shadow Map \| Relit)* | ![shadow_61992_comp](examples/res/gifs/reshadow/shadow_61992_comp.gif) | ![diffuse_61992_comp](examples/res/gifs/reshadow/diffuse_61992_comp.gif) |
-| **`max`**<br>*(Relit Output)* | ![shadow_max_res](examples/res/gifs/reshadow/shadow_max_res.gif) | ![diffuse_max_res](examples/res/gifs/reshadow/diffuse_max_res.gif) |
-| **`max`**<br>*(Input \| Shadow Map \| Relit)* | ![shadow_max_comp](examples/res/gifs/reshadow/shadow_max_comp.gif) | ![diffuse_max_comp](examples/res/gifs/reshadow/diffuse_max_comp.gif) |
+| **`61992`** | ![sweep_61992_res](examples/res/gifs/reshadow/sweep_61992_res.gif) | ![sweep_61992_comp](examples/res/gifs/reshadow/sweep_61992_comp.gif) |
+| **`max`** | ![sweep_max_res](examples/res/gifs/reshadow/sweep_max_res.gif) | ![sweep_max_comp](examples/res/gifs/reshadow/sweep_max_comp.gif) |
 
 ---
 
-### 2. Rotating Spherical Harmonics Lighting (`rotateSH`)
+### 1.2 Rotating Spherical Harmonics Lighting (`rotateSH`)
 Rotating the 3D Spherical Harmonics (SH) lighting around axis 2 (`--rotate_sh --rotate_sh_axis 2`) with controlled cast-shadow intensity (`--relight_with_given_c 0.9`):
 
 | Subject | Relit Output | Conditioning & Output (`Input \| Rotated Shading \| Ray-Traced Shadow \| Relit`) |
@@ -28,7 +50,7 @@ Rotating the 3D Spherical Harmonics (SH) lighting around axis 2 (`--rotate_sh --
 
 ---
 
-### 3. Target-SH Relighting (`targetSH`)
+### 1.3 Target-SH Relighting (`targetSH`)
 Interpolating lighting and cast shadows from a source portrait (`src`) to match a target reference portrait (`dst`) (`--relight_with_dst_c`):
 
 | Pair (`src -> dst`) | Relit Output | Conditioning & Output (`Src \| Target Dst \| Target Shading \| Target Shadow \| Relit`) |
@@ -38,11 +60,115 @@ Interpolating lighting and cast shadows from a source portrait (`src`) to match 
 
 ---
 
-## Step-by-Step Usage Guide
+## 2. Prerequisites
 
-### Step 1: Place Raw Input Images
+### 2.1 Conda Environments
 
-Place your unaligned portrait images into `examples/dat/images/`:
+Exported Conda environment files are provided under [`envs/`](envs/):
+
+```text
+envs/
+├── difareli_pp_sampling.yml         # Inference, DECA 3D rendering, face segmentation, and vis.py
+├── difareli_pp_create_dataset.yml   # Dataset preprocessing (ArcFace, DiffAE shadow score, MediaPipe)
+├── difareli_pp_training.yml         # Model training
+└── ffhq_env.yml                     # FFHQ face alignment (dlib)
+```
+
+Create the environments via:
+
+```bash
+# 1. Sampling / Inference environment (also used by DECA & face-parsing in create_dataset.py)
+conda env create -f envs/difareli_pp_sampling.yml
+
+# 2. Dataset creation environment (ArcFace, DiffAE shadow score, MediaPipe pupil extraction)
+conda env create -f envs/difareli_pp_create_dataset.yml
+
+# 3. FFHQ face alignment environment (installed locally where create_dataset.py expects it, or in conda)
+conda env create -f envs/ffhq_env.yml -p ./dataset_generation/prepare_relighting_data/FFHQ_align/ffhq_env
+
+# 4. Training environment (optional, for training from scratch)
+conda env create -f envs/difareli_pp_training.yml
+```
+
+Install the local `guided_diffusion` package in editable mode inside `difareli_pp_sampling` (and `difareli_pp_training`):
+
+```bash
+conda activate difareli_pp_sampling
+pip install -e .
+```
+
+---
+
+### 2.2 Pretrained Checkpoints & Model Weights
+
+#### A. DiFaReli++ Single-Shot Relighting Checkpoints
+Place the trained **DiFaReli++** checkpoint files in your checkpoint directory (e.g., `/data/mint/DiFaReli++/ckpt/DiFaReli++/`):
+
+```text
+<log_dir>/                           # e.g., /data/mint/DiFaReli++/ckpt/DiFaReli++/
+├── ImgCond_ema_0.9999_300000.pt     # Single-shot generator EMA weights
+├── ImgEncoder_ema_0.9999_300000.pt  # Spatial condition encoder EMA weights
+├── ImgCond_model300000.pt           # (Optional) non-EMA generator weights
+└── ImgEncoder_model300000.pt        # (Optional) non-EMA condition encoder weights
+```
+
+#### B. Preprocessing & Conditioning Model Weights
+Ensure the following third-party weights and 3D morphable model assets are placed at the paths below:
+
+```text
+difareli-pp_code/
+├── model_3d/FLAME/data/
+│   ├── generic_model.pkl
+│   ├── head_template.obj
+│   └── landmark_embedding.npy
+│
+├── sample_scripts/cond_utils/
+│   ├── DECA/data/
+│   │   ├── deca_model.tar
+│   │   ├── generic_model.pkl
+│   │   ├── head_template.obj
+│   │   ├── landmark_embedding.npy
+│   │   ├── fixed_displacement_256.npy
+│   │   ├── texture_data_256.npy
+│   │   ├── FLAME_masks.pkl
+│   │   └── FLAME_masks_face-id.pkl
+│   └── arcface/detector/
+│       ├── mtcnn/weights/{pnet.npy, rnet.npy, onet.npy}
+│       └── retinaface/weights/mobilenet0.25_Final.pth
+│
+└── dataset_generation/prepare_relighting_data/
+    ├── face-parsing.PyTorch/res/cp/
+    │   └── 79999_iter.pth
+    ├── mediapipe/
+    │   ├── face_landmarker.task
+    │   └── face_landmarker_v2_with_blendshapes.task
+    ├── DECA/data/
+    │   ├── deca_model.tar
+    │   ├── generic_model.pkl
+    │   ├── head_template.obj
+    │   ├── landmark_embedding.npy
+    │   ├── fixed_displacement_256.npy
+    │   ├── texture_data_256.npy
+    │   ├── faces_index.pkl
+    │   ├── FLAME_masks.pkl
+    │   └── FLAME_masks_face-id.pkl
+    ├── Arcface/
+    │   ├── pretrained/BEST_checkpoint_r18.tar
+    │   └── detector/
+    │       ├── mtcnn/weights/{pnet.npy, rnet.npy, onet.npy}
+    │       └── retinaface/weights/mobilenet0.25_Final.pth
+    └── diffae/
+        ├── shadow_cls_weight.pkl
+        └── checkpoints/ffhq256_autoenc/last.ckpt
+```
+
+---
+
+## 3. Preparing the Data
+
+### 3.1 Step 1: Place Raw Input Images
+
+Place your raw portrait images into `examples/dat/images/`:
 
 ```text
 examples/dat/
@@ -53,11 +179,11 @@ examples/dat/
 
 ---
 
-### Step 2: Run Dataset Preprocessing (`create_dataset.py`)
+### 3.2 Step 2: Run Dataset Preprocessing (`create_dataset.py`)
 
-Run `create_dataset.py` from `dataset_generation/prepare_relighting_data/` to perform:
+Run `create_dataset.py` from `dataset_generation/prepare_relighting_data/` to extract:
 1. **FFHQ Face Alignment (`--ffhq_align`)**: Crops and aligns portraits to $256 \times 256$ in `images_aligned/<set>/`.
-2. **Face Segmentation & Pupil Landmarks (`--faceseg`)**: Generates 19-class face parsing masks (`face_segment/<set>/anno/`) and 21-class pupil-augmented masks (`face_segment_with_pupil/<set>/anno/`).
+2. **Face Segmentation & Pupil Landmarks (`--faceseg`)**: Produces 19-class face parsing masks (`face_segment/<set>/anno/`) and 21-class pupil-augmented masks (`face_segment_with_pupil/<set>/anno/`).
 3. **DECA 3D Reconstruction & Shading (`--deca`)**: Estimates FLAME 3D parameters (`shape`, `pose`, `exp`, `cam`, `light`, `albedo`, `detail`) in `params/<set>/` and renders masked Lambertian face shadings (`rendered_images/deca_masked_face_images_{wclip,woclip}/<set>/`).
 4. **ArcFace Identity Embedding (`--arcface`)**: Extracts identity features into `params/<set>/ffhq-<set>-faceemb-anno.txt`.
 5. **DiffAE Shadow Scalar Estimation (`--shadow`)**: Computes raw cast-shadow scalar scores $C$ in `params/<set>/ffhq-<set>-shadow-anno.txt`.
@@ -90,6 +216,9 @@ python create_dataset.py \
 | `--deca` | `False` | Run DECA 3D reconstruction and masked Lambertian shading rendering |
 | `--arcface` | `False` | Extract ArcFace identity embeddings |
 | `--shadow` | `False` | Estimate DiffAE shadow scalar $C$ |
+| `--env_ffhq` | `./FFHQ_align/ffhq_env/bin/python` | Python executable for FFHQ alignment |
+| `--env_create_dataset` | `.../envs/difareli_pp_create_dataset/bin/python` | Python executable for ArcFace, DiffAE, and MediaPipe |
+| `--env_sampling` | `.../envs/difareli_pp_sampling/bin/python` | Python executable for FaceSeg and DECA |
 
 #### Folder Structure After Step 2
 
@@ -142,10 +271,10 @@ examples/dat/
 
 ---
 
-### Step 3: Compute Smooth Spatial Shadow Maps (`shadow_map/gen_smooth_Sdiff.py`)
+### 3.3 Step 3: Compute Smooth Spatial Shadow Maps (`gen_smooth_Sdiff.py`)
 
-#### 3.1 Generate Reshadowed Reference Frames (via DiFaReli)
-To compute the source spatial shadow map for each input portrait, first synthesize two reshadowed versions of each aligned image—one interpolated toward **strongest shadow** (`shadow`) and one toward **diffuse / shadow-free** (`diffuse`)—using the DPM-based reshadowing script in the original **DiFaReli** repository:
+#### A. Generate Reshadowed Reference Frames (via DiFaReli)
+To compute the source spatial shadow map for each input portrait, first synthesize two reshadowed versions of each aligned image—one interpolated toward **strongest shadow** (`shadow`) and one toward **diffuse / shadow-free** (`diffuse`)—using the DPM-based reshadowing script from the original **DiFaReli** repository:
 👉 **[https://github.com/diffusion-face-relighting/difareli_code](https://github.com/diffusion-face-relighting/difareli_code)**
 
 Place the resulting reshadowed frames (`res_frame0.png ... res_frame4.png`, or the final frame `res_frame4.png`) under `examples/dat/reshadow/`:
@@ -164,7 +293,7 @@ examples/dat/reshadow/
         └── res_frame4.png
 ```
 
-#### 3.2 Run `gen_smooth_Sdiff.py`
+#### B. Run `gen_smooth_Sdiff.py`
 From `dataset_generation/prepare_relighting_data/`, run:
 
 ```bash
@@ -203,7 +332,7 @@ examples/dat/
 
 ---
 
-### Step 4: Single-Shot Reshadowing & Relighting (`relight_fixed.py`)
+## 4. Inference (`inference.py`)
 
 Configure your source/target pairs in `examples/pair.json`:
 ```json
@@ -215,17 +344,20 @@ Configure your source/target pairs in `examples/pair.json`:
 }
 ```
 
-Run `relight_fixed.py` from `sample_scripts/single_shot/`:
+Activate `difareli_pp_sampling` and run `inference.py` from `sample_scripts/single_shot/`:
 
 ```bash
-cd ../../sample_scripts/single_shot
+conda activate difareli_pp_sampling
+cd sample_scripts/single_shot
 ```
 
-#### 4.1 Reshadowing (Strengthen Shadow & Diffuse Shadow)
+---
+
+### 4.1 Reshadowing (Strengthen Shadow & Diffuse Shadow)
 
 - **Strengthen Shadow (`--shadow_diff_inc_c --force_src_shading_for_reshadow`)**:
   ```bash
-  python relight_fixed.py \
+  python inference.py \
     --dataset_root ../../examples/dat/ \
     --set valid \
     --step 300000 \
@@ -243,7 +375,7 @@ cd ../../sample_scripts/single_shot
 
 - **Diffuse / Remove Shadow (`--shadow_diff_dec_c --force_diffuse_shading_for_reshadow`)**:
   ```bash
-  python relight_fixed.py \
+  python inference.py \
     --dataset_root ../../examples/dat/ \
     --set valid \
     --step 300000 \
@@ -259,12 +391,14 @@ cd ../../sample_scripts/single_shot
     --save_vid
   ```
 
-#### 4.2 Rotate SH Lighting (`--rotate_sh`)
+---
+
+### 4.2 Rotate SH Lighting (`rotateSH`)
 
 Rotates the source SH lighting 360° around `--rotate_sh_axis` (`0`, `1`, or `2`) with ray-traced cast shadows scaled by `--relight_with_given_c`:
 
 ```bash
-python relight_fixed.py \
+python inference.py \
   --dataset_root ../../examples/dat/ \
   --set valid \
   --step 300000 \
@@ -281,12 +415,14 @@ python relight_fixed.py \
   --save_vid
 ```
 
-#### 4.3 Target-SH Relighting (`targetSH`)
+---
+
+### 4.3 Target-SH Relighting (`targetSH`)
 
 Relights `src` by interpolating toward `dst`'s SH lighting and applying `dst`'s shadow scalar (`--relight_with_dst_c`):
 
 ```bash
-python relight_fixed.py \
+python inference.py \
   --dataset_root ../../examples/dat/ \
   --set valid \
   --step 300000 \
@@ -302,11 +438,11 @@ python relight_fixed.py \
   --save_vid
 ```
 
-> **Note on Frame 0 in `rotateSH` and `targetSH`:** Frame `0` (`res_frame0.png`) uses the precomputed 2D source shadow map (`shadow_diff_SS_with_c_simplified`), whereas frames `1 .. N-1` use 3D ray-traced target shadow masks. Because there is no direct spatial morphing between the 2D source shadow map and the 3D ray-traced shadow mask at frame `0`, discard frame `0` (or use the `*_no1.mp4` videos generated in `vid/`) for smooth animations.
+> **Note on Frame 0 in `rotateSH` and `targetSH`:** Frame `0` (`res_frame0.png`) uses the precomputed 2D source shadow map (`shadow_diff_SS_with_c_simplified`), whereas frames `1 .. N-1` use 3D ray-traced target shadow masks. Because there is no direct spatial blending between the 2D source shadow map and the 3D ray-traced shadow mask at frame `0`, discard frame `0` (or use the `*_no1.mp4` videos generated in `vid/`) for smooth animations.
 
 ---
 
-#### Useful Arguments (`relight_fixed.py`)
+### 4.4 Useful CLI Arguments (`inference.py`)
 
 | Argument | Default | Description |
 | :--- | :--- | :--- |
@@ -319,7 +455,7 @@ python relight_fixed.py \
 | `--ckpt_selector` | `ema` | Weight type (`ema` or `model`) |
 | **Pairs & Sampling** | | |
 | `--sample_pair_json` | `None` | Path to JSON file specifying `src`/`dst` pairs |
-| `--sample_pair_mode` | `None` | JSON pairing key (`pair`, `pairwise`, `list`) |
+| `--sample_pair_mode` | `pair` | JSON pairing key (`pair`, `pairwise`, `list`) |
 | `--src_dst` | `[]` | Explicit CLI pair override, e.g., `--src_dst max.png 61992.png` |
 | `--idx` | `[0, 99999]` | Start and end pair indices to process |
 | `--itp_step` | `15` | Number of interpolation frames (`n_frames`) |
@@ -347,7 +483,7 @@ python relight_fixed.py \
 
 ---
 
-#### Output Folder Structure After Step 4
+### 4.5 Output Folder Structure
 
 Single-subject modes (`reshadow/*`, `rotateSH_*`) organize outputs under `<out_dir>/<src_stem>/`, while paired target-lighting modes (`targetSH`) organize outputs under `<out_dir>/<src_stem>_to_<dst_stem>/`:
 
@@ -393,10 +529,8 @@ examples/res/
 │
 └── gifs/                                    # High-quality showcase GIFs
     ├── reshadow/
-    │   ├── shadow_61992_res.gif, shadow_61992_comp.gif
-    │   ├── shadow_max_res.gif, shadow_max_comp.gif
-    │   ├── diffuse_61992_res.gif, diffuse_61992_comp.gif
-    │   └── diffuse_max_res.gif, diffuse_max_comp.gif
+    │   ├── sweep_61992_res.gif, sweep_61992_comp.gif
+    │   └── sweep_max_res.gif, sweep_max_comp.gif
     ├── rotateSH/
     │   ├── rotateSH_61992_res.gif, rotateSH_61992_comp.gif
     │   └── rotateSH_max_res.gif, rotateSH_max_comp.gif
@@ -407,7 +541,7 @@ examples/res/
 
 ---
 
-### Interactive Web Visualization (`vis.py`)
+### 4.6 Interactive Web Visualization (`vis.py`)
 
 To inspect all generated frames, conditioning maps, and videos in your browser:
 
@@ -415,3 +549,9 @@ To inspect all generated frames, conditioning maps, and videos in your browser:
 cd sample_scripts/single_shot
 python vis.py --root_dir ../../examples/res/ --port 8888
 ```
+
+---
+
+## 5. Training
+
+*TBD*
