@@ -1,6 +1,10 @@
-# DiFaReli++: Single-Shot Diffusion Face Relighting & Cast-Shadow Manipulation
+# [DiFaReli: Diffusion Face Relighting with Consistent Cast Shadows](https://diffusion-face-relighting-pp.github.io/) (TPAMI 2026)
+### [Puntawat Ponglertnapakorn](https://puntawatp.github.io/), [Nontawat Tritrong](https://scholar.google.com/citations?user=2txp4s0AAAAJ&hl=en), [Supasorn Suwajanakorn](https://www.supasorn.com/)
 
-Official repository for **DiFaReli++**, providing end-to-end preprocessing, spatial shadow map estimation, and single-shot facial relighting and cast-shadow manipulation.
+
+
+![Alt text](./misc/teaser.png)
+
 
 ---
 
