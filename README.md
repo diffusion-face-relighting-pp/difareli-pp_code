@@ -58,6 +58,8 @@ Interpolating lighting and cast shadows from a source portrait (`src`) to match 
 | <img src="examples/dat/images_aligned/valid/61992.png" height="128"> <img src="examples/dat/images_aligned/valid/max.png" height="128"> | <img src="examples/res/gifs/targetSH/targetSH_61992_to_max_relit_shadow_shading.gif" height="128"> |
 | <img src="examples/dat/images_aligned/valid/max.png" height="128"> <img src="examples/dat/images_aligned/valid/61992.png" height="128"> | <img src="examples/res/gifs/targetSH/targetSH_max_to_61992_relit_shadow_shading.gif" height="128"> |
 
+> **Image Credits:** Example portraits are sourced from the [FFHQ Dataset (`61992.png`)](https://github.com/nvlabs/ffhq-dataset) and [The New York Times (`max.jpg`)](https://www.nytimes.com/2021/10/29/sports/autoracing/max-verstappen-f1.html).
+
 ---
 
 ## 2. Prerequisites
@@ -365,15 +367,16 @@ cd sample_scripts/single_shot
     --cfg_name DiFaReli++.yaml \
     --log_dir /data/mint/DiFaReli++/ckpt/DiFaReli++/ \
     --sample_pair_json ../../examples/pair.json \
-    --itp_step 5 \
+    --itp_step 60 \
     --batch_size 1 \
     --gpu_id 2 \
     --shadow_diff_inc_c \
     --force_src_shading_for_reshadow \
+    --reshadow_with_given_c 0.15 \
     --save_vid
   ```
 
-- **Diffuse / Remove Shadow (`--shadow_diff_dec_c --force_diffuse_shading_for_reshadow`)**:
+- **Diffuse / Remove Shadow (`--shadow_diff_dec_c --force_diffuse_shading_for_reshadow --itp_diffuse_sh`)**:
   ```bash
   python inference.py \
     --dataset_root ../../examples/dat/ \
@@ -383,13 +386,18 @@ cd sample_scripts/single_shot
     --cfg_name DiFaReli++.yaml \
     --log_dir /data/mint/DiFaReli++/ckpt/DiFaReli++/ \
     --sample_pair_json ../../examples/pair.json \
-    --itp_step 5 \
+    --itp_step 60 \
     --batch_size 1 \
     --gpu_id 2 \
     --shadow_diff_dec_c \
     --force_diffuse_shading_for_reshadow \
+    --itp_diffuse_sh \
     --save_vid
   ```
+
+> **Reshadowing Tips:**
+> - **Custom Starting Shadow Scalar (`--reshadow_with_given_c <val>`)**: By default, reshadowing starts from the input portrait's estimated shadow score $C_{\text{src}}$. To start strengthening from a lower $C$ (e.g., `0.1`) or diffusing from a higher $C$ (e.g., `0.9`) for a more pronounced transition, add `--reshadow_with_given_c 0.1` (values in `[0.0, 1.0]`).
+> - **Smooth Shading Interpolation to Diffuse (`--itp_diffuse_sh`)**: Adding `--itp_diffuse_sh` alongside `--force_diffuse_shading_for_reshadow` linearly interpolates the DECA SH shading from the source directional SH to the ambient-only diffuse SH across the frames instead of switching shading in a single step.
 
 ---
 
@@ -466,6 +474,7 @@ python inference.py \
 | `--rotate_sh_axis` | `0` | Rotation axis (`0`, `1`, or `2`) when `--rotate_sh` is enabled |
 | `--force_src_shading_for_reshadow` | `False` | Keep source SH shading fixed across frames (used with `--shadow_diff_inc_c`) |
 | `--force_diffuse_shading_for_reshadow` | `False` | Use ambient-only diffuse SH shading on target frames (used with `--shadow_diff_dec_c`) |
+| `--itp_diffuse_sh` | `False` | Linearly interpolate SH from source shading to ambient diffuse shading (use with `--force_diffuse_shading_for_reshadow`) |
 | `--scale_sh` | `1.0` | Multiplier on target SH coefficients |
 | **Shadow Map & Weight ($C$)** | | |
 | `--shadow_diff_inc_c` | `False` | **Reshadow mode**: Lock source shadow mask and linearly increase $C \to 1.0$ |
