@@ -33,10 +33,10 @@ Official repository for **DiFaReli++**, providing end-to-end preprocessing, spat
 ### 1.1 Cast-Shadow Manipulation (Reshadowing)
 Interpolating the cast-shadow scalar $C$ toward **maximum shadow** (`--shadow_diff_inc_c`) or **diffuse / shadow-free** (`--shadow_diff_dec_c`):
 
-| Input | Strengthen (`Relit \| Shadow`) | Diffuse (`Relit \| Shadow`) |
+| Input | Strengthen (`Relit \| Shadow \| Shading`) | Diffuse (`Relit \| Shadow \| Shading`) |
 | :---: | :---: | :---: |
-| <img src="examples/dat/images_aligned/valid/61992.png" height="128"> | <img src="examples/res/gifs/reshadow/shadow_61992_relit_shadow.gif" height="128"> | <img src="examples/res/gifs/reshadow/diffuse_61992_relit_shadow.gif" height="128"> |
-| <img src="examples/dat/images_aligned/valid/max.png" height="128"> | <img src="examples/res/gifs/reshadow/shadow_max_relit_shadow.gif" height="128"> | <img src="examples/res/gifs/reshadow/diffuse_max_relit_shadow.gif" height="128"> |
+| <img src="examples/dat/images_aligned/valid/61992.png" height="115"> | <img src="examples/res/gifs/reshadow/shadow_61992_relit_shadow_shading.gif" height="115"> | <img src="examples/res/gifs/reshadow/diffuse_61992_relit_shadow_shading.gif" height="115"> |
+| <img src="examples/dat/images_aligned/valid/max.png" height="115"> | <img src="examples/res/gifs/reshadow/shadow_max_relit_shadow_shading.gif" height="115"> | <img src="examples/res/gifs/reshadow/diffuse_max_relit_shadow_shading.gif" height="115"> |
 
 ---
 
@@ -538,10 +538,10 @@ examples/res/
 │
 └── gifs/                                    # High-quality showcase GIFs
     ├── reshadow/
-    │   ├── shadow_61992_relit_shadow.gif
-    │   ├── shadow_max_relit_shadow.gif
-    │   ├── diffuse_61992_relit_shadow.gif
-    │   └── diffuse_max_relit_shadow.gif
+    │   ├── shadow_61992_relit_shadow_shading.gif
+    │   ├── shadow_max_relit_shadow_shading.gif
+    │   ├── diffuse_61992_relit_shadow_shading.gif
+    │   └── diffuse_max_relit_shadow_shading.gif
     ├── rotateSH/
     │   ├── rotateSH_61992_relit_shadow_shading.gif
     │   └── rotateSH_max_relit_shadow_shading.gif
