@@ -30,6 +30,29 @@ class Norm(nn.Module):
     def extra_repr(self) -> str:
         return f"ord={self.ord}"
 
+class Hadamart(nn.Module):
+    def __init__(self, clip):
+        super().__init__()
+        self.clip = clip
+        if self.clip is None:
+            print("[#] Use Hadamart-Simple")
+        else:
+            self.clip = str.lower(self.clip)
+            if (self.clip == 'tanh') or (self.clip == 'tanh_after'):
+                print(f"[#] Use Hadamart-{self.clip}")
+                self.clip_layer = nn.Tanh()
+            else: raise NotImplementedError("[#Hadamart]The clipping method is not found")
+        
+    def forward(self, x, y):
+        if self.clip == 'tanh':
+            out = th.mul(x, self.clip_layer(y))
+        elif self.clip == 'tanh_after':
+            out = self.clip_layer(th.mul(x, y))
+        elif self.clip is None:
+            out = th.mul(x, y)
+        else: raise NotImplementedError("[#Hadamart]The clipping method is not found")
+        return out
+
 class HadamartLayer(nn.Module):
     def __init__(self, cfg, channels, image_size):
         '''
