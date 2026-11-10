@@ -5,7 +5,7 @@ from . import gaussian_diffusion as gd
 from guided_diffusion.respace import SpacedDiffusion, space_timesteps
 from guided_diffusion.models.spatial_cond_arch.unet_spatial_condition_hadamart_no_dpm_notime import UNetModel_SpatialCondition_Hadamart_No_DPM_NoTime, EncoderUNet_SpatialCondition
 
-from guided_diffusion.mint_logger import createLogger
+from guided_diffusion.my_logger import createLogger
 import torch as th
 
 NUM_CLASSES = 1000
