@@ -56,12 +56,12 @@ pip install -e .
 
 ---
 
-### 1.2 Pretrained Checkpoints & Model Weights
+### 1.2 Checkpoints
 
-Place the **DiFaReli++** checkpoint files (`ImgCond_ema_0.9999_300000.pt`, `ImgEncoder_ema_0.9999_300000.pt`) in `<log_dir>/` (e.g., `/data/mint/DiFaReli++/ckpt/DiFaReli++/`), along with the third-party preprocessing weights.
+The DiFaReli++'s checkpoints can be fine [here](https://vistec-my.sharepoint.com/:f:/g/personal/puntawat_p_s19_vistec_ac_th/IgBH7bjXhjx4RYoVJErshKgrARGUXzCkubt90jIUTG5IsjQ?e=JYR2W1). Place the **DiFaReli++** checkpoint files (`ImgCond_ema_0.9999_300000.pt`, `ImgEncoder_ema_0.9999_300000.pt`) in directory named `DiFaReli++` (e.g., `<path_to_ckpt>/DiFaReli++/`), along with the other pretrained weights ([DECA](https://github.com/yfeng95/DECA), [Diff-AE](https://github.com/phizaz/diffae), [Face Parsing](https://github.com/zllrunning/face-parsing.PyTorch), [ArcFace](https://github.com/foamliu/InsightFace-v2/tree/e07b738adecb69b81ac9b8750db964cee673e175)) (For installation please follows those repos.).
 
 <details>
-<summary><b>📂 Click to expand required checkpoint & third-party model paths</b></summary>
+<summary><b>📂 Click to expand required checkpoint & pretrained off-the-shelf algorithm paths</b></summary>
 
 ```text
 <log_dir>/                                  # e.g., /data/mint/DiFaReli++/ckpt/DiFaReli++/
@@ -86,11 +86,14 @@ difareli-pp_code/
 
 ---
 
-## 2. Preparing the Data
+## 2. Preparing the Data for Inference
 
 ### 2.1 Step 1: Place Raw Input Images
 
-Place raw input portraits in `examples/dat/images/` (e.g., `examples/dat/images/{61992.png, max.jpg}`).
+Place raw input portraits in `examples/dat/images/`. We gives 2 images as the examples to run (e.g., `examples/dat/images/{61992.png, max.jpg}`).
+
+> - **Image Credits**: Example portraits are sourced from the [FFHQ Dataset (`61992.png`)](https://github.com/nvlabs/ffhq-dataset) and [The New York Times (`max.jpg`)](https://www.nytimes.com/2021/10/29/sports/autoracing/max-verstappen-f1.html).
+
 
 ---
 
@@ -152,7 +155,7 @@ examples/dat/
 
 ### 2.3 Step 3: Compute Smooth Spatial Shadow Maps (`gen_smooth_Sdiff.py`)
 
-1. **Generate Reshadowed Reference Frames (via DiFaReli)**: Synthesize `shadow` (strongest shadow) and `diffuse` (shadow-free) reference frames for each aligned image using the original **[DiFaReli repository](https://github.com/diffusion-face-relighting/difareli_code)** and place them under `examples/dat/reshadow/{diffuse,shadow}/<img_stem>/res_frame4.png` (supports either a single final frame `res_frame4.png` or full sequence `res_frame0..4.png`).
+1. **Generate Reshadowed Reference Frames (via DiFaReli)**: Synthesize `shadow` (strong shadow) and `diffuse` (shadow-free) version reference frames for each aligned image using the original **[DiFaReli repository](https://github.com/diffusion-face-relighting/difareli_code)** and place them under `examples/dat/reshadow/{diffuse,shadow}/<img_name>/res_frame<n>.png`.
 2. **Compute Smooth Spatial Shadow Maps**:
    ```bash
    python ./shadow_map/gen_smooth_Sdiff.py \
@@ -160,7 +163,7 @@ examples/dat/
      --reshadow_dir ../../examples/dat/reshadow/ \
      --set valid
    ```
-   This saves the normalized $C$-weighted spatial shadow maps to `examples/dat/shadow_diff_SS_with_c_simplified/<set>/<img_stem>.npy` (and visualizations in `vis/<set>/`).
+   This saves the normalized $C$-weighted spatial shadow maps to `examples/dat/shadow_diff_SS_with_c_simplified/<set>/<img_name>.npy` (and visualizations in `vis/<set>/`).
 
 <details>
 <summary><b>⚙️ Click to expand <code>gen_smooth_Sdiff.py</code> arguments & directory layout</b></summary>
@@ -170,8 +173,6 @@ examples/dat/
 | `--dataset_dir` | *(Required)* | Root dataset directory (`../../examples/dat/`) |
 | `--reshadow_dir` | `<dataset_dir>/reshadow` | Directory containing `shadow/` and `diffuse/` reshadowed frames |
 | `--set` | `valid` | Dataset split (`train`, `valid`, `test`) |
-| `--thres` | `-0.015` | Signed grayscale intensity difference threshold (`diffuse - shadow < thres`) |
-| `--median_blur_ksize` | `5` | Kernel size for `cv2.medianBlur` smoothing |
 | `--shadow_idx` / `--diffuse_idx` | `-1` | Frame index in the shadow/diffuse sequence (`-1` = last frame) |
 
 ```text
@@ -210,7 +211,7 @@ cd sample_scripts/single_shot
 
 ### 3.1 Reshadowing (Strengthen Shadow & Diffuse Shadow)
 
-Interpolates the cast-shadow scalar $C$ toward **maximum shadow** (`--shadow_diff_inc_c`) or **diffuse / shadow-free** (`--shadow_diff_dec_c`):
+Interpolates the cast-shadow scalar $C$ toward **maximum shadow** (`--shadow_diff_inc_c`) or **diffuse** (`--shadow_diff_dec_c`):
 
 - **Strengthen Shadow**:
   ```bash
@@ -224,7 +225,7 @@ Interpolates the cast-shadow scalar $C$ toward **maximum shadow** (`--shadow_dif
     --sample_pair_json ../../examples/pair.json \
     --itp_step 60 \
     --batch_size 1 \
-    --gpu_id 2 \
+    --gpu_id 0 \
     --shadow_diff_inc_c \
     --force_src_shading_for_reshadow \
     --reshadow_with_given_c 0.15 \
@@ -243,18 +244,14 @@ Interpolates the cast-shadow scalar $C$ toward **maximum shadow** (`--shadow_dif
     --sample_pair_json ../../examples/pair.json \
     --itp_step 60 \
     --batch_size 1 \
-    --gpu_id 2 \
+    --gpu_id 0 \
     --shadow_diff_dec_c \
     --force_diffuse_shading_for_reshadow \
     --itp_diffuse_sh \
     --save_vid
   ```
 
-> **Reshadowing Tips:**
-> - **Custom Starting Shadow Scalar (`--reshadow_with_given_c <val>`)**: Overrides the starting shadow scalar $C \in [0, 1]$ instead of starting from $C_{\text{src}}$ (e.g., `--reshadow_with_given_c 0.15` to start strengthening from a lighter shadow).
-> - **Smooth Shading Interpolation to Diffuse (`--itp_diffuse_sh`)**: Linearly interpolates the DECA SH shading from the source directional SH to the ambient-only diffuse SH across frames when used with `--force_diffuse_shading_for_reshadow`.
-
-#### Results (`Reshadowing`)
+## 🖼️ `Reshadowing` Results
 
 | Input | Strengthen (`Relit \| Shadow \| Shading`) | Diffuse (`Relit \| Shadow \| Shading`) |
 | :---: | :---: | :---: |
@@ -285,9 +282,9 @@ python inference.py \
   --save_vid
 ```
 
-#### Results (`rotateSH`)
+## 🖼️ Relighting with `RotateSH` Results
 
-| Input | Output & Conditioning (`Relit \| Shadow \| Shading`) |
+| Input | Output & Conditioning (`Relit \| Shadow map \| Shading ref.`) |
 | :---: | :---: |
 | <img src="examples/dat/images_aligned/valid/61992.png" height="128"> | <img src="examples/res/gifs/rotateSH/rotateSH_61992_relit_shadow_shading.gif" height="128"> |
 | <img src="examples/dat/images_aligned/valid/max.png" height="128"> | <img src="examples/res/gifs/rotateSH/rotateSH_max_relit_shadow_shading.gif" height="128"> |
@@ -315,16 +312,15 @@ python inference.py \
   --save_vid
 ```
 
-#### Results (`targetSH`)
+## 🖼️ Relighting with `TargetSH` Results
 
-| Input (`Src \| Dst`) | Output & Conditioning (`Relit \| Shadow \| Shading`) |
+| Input (`Src \| Dst`) | Output & Conditioning (`Relit \| Shadow map \| Shading ref.`) |
 | :---: | :---: |
 | <img src="examples/dat/images_aligned/valid/61992.png" height="128"> <img src="examples/dat/images_aligned/valid/max.png" height="128"> | <img src="examples/res/gifs/targetSH/targetSH_61992_to_max_relit_shadow_shading.gif" height="128"> |
 | <img src="examples/dat/images_aligned/valid/max.png" height="128"> <img src="examples/dat/images_aligned/valid/61992.png" height="128"> | <img src="examples/res/gifs/targetSH/targetSH_max_to_61992_relit_shadow_shading.gif" height="128"> |
 
 > **Notes:**
 > - **Frame 0 in `rotateSH` / `targetSH`**: Frame `0` (`res_frame0.png`) uses the 2D source shadow map (`shadow_diff_SS_with_c_simplified`), whereas frames `1 .. N-1` use 3D ray-traced target shadow masks. Discard frame `0` (or use `vid/*_no1.mp4`) for smooth animations.
-> - **Image Credits**: Example portraits are sourced from the [FFHQ Dataset (`61992.png`)](https://github.com/nvlabs/ffhq-dataset) and [The New York Times (`max.jpg`)](https://www.nytimes.com/2021/10/29/sports/autoracing/max-verstappen-f1.html).
 
 ---
 
@@ -368,17 +364,6 @@ examples/res/
 ```
 
 </details>
-
----
-
-### 3.5 Interactive Web Visualization (`vis.py`)
-
-To inspect all generated frames, conditioning maps, and videos in your browser:
-
-```bash
-cd sample_scripts/single_shot
-python vis.py --root_dir ../../examples/res/ --port 8888
-```
 
 ---
 
