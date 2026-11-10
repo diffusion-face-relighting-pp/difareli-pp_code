@@ -125,10 +125,16 @@ misc/myset2
 **/Arcface/detector/mtcnn/weights/
 **/Arcface/detector/retinaface/weights/
 **/Arcface/pretrained/
+**/arcface/detector/mtcnn/weights/
+**/arcface/detector/retinaface/weights/
 **/FFHQ_align/ffhq_env/
 **/FFHQ_align/temp/
 **/FFHQ_align/dat/
 **/DECA/data/
+model_3d/FLAME/data/
+**/face-parsing.PyTorch/res/cp/
+**/mediapipe/*.task
+misc/*.task
 **/diffae/checkpoints/
 **/diffae/datasets/celeba_anno/
 dataset_generation/prepare_relighting_data/misc/myset2
