@@ -36,7 +36,7 @@ def build_parser():
     ren_group.add_argument('--rotate_normals', action='store_true', default=False)
     ren_group.add_argument('--rotate_sh', action='store_true', default=False, help='Rotate source SH lighting')
     ren_group.add_argument('--rotate_sh_dst', action='store_true', default=False, help='Rotate destination SH lighting')
-    ren_group.add_argument('--rotate_sh_axis', type=int, default=0, help='SH rotation axis (0, 1, or 2)')
+    ren_group.add_argument('--rotate_sh_axis', type=int, default=2, help='SH rotation axis (0, 1, or 2)')
     ren_group.add_argument('--force_diffuse_shading_for_reshadow', action='store_true', default=False, help='Zero out directional SH bands for matted/diffuse DECA rendering')
     ren_group.add_argument('--force_src_shading_for_reshadow', action='store_true', default=False, help='Keep source SH constant for reshadowing')
     ren_group.add_argument('--itp_diffuse_sh', action='store_true', default=False, help='Interpolate from src SH to diffuse SH')

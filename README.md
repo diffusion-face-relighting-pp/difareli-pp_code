@@ -243,7 +243,7 @@ cd sample_scripts/single_shot
 
 ### 3.1 Reshadowing (Strengthen Shadow & Diffuse Shadow)
 
-Interpolates the cast-shadow scalar $C$ toward **maximum shadow** (`--shadow_diff_inc_c`) or **diffuse** (`--shadow_diff_dec_c`):
+Interpolates the cast-shadow scalar $C$ toward **more shadow** (`--shadow_diff_inc_c`) or **diffuse** (`--shadow_diff_dec_c`):
 
 - **Strengthen Shadow**:
   ```bash
@@ -377,22 +377,21 @@ Single-subject modes (`reshadow/*`, `rotateSH_*`) save outputs to `<out_dir>/<sr
 | **General (Dataset, Checkpoint & Output)** | | |
 | `--dataset_root` / `--set` | *(Required)* | Preprocessed dataset root (`../../examples/dat/`) and split (`valid`, `train`, `test`) |
 | `--log_dir` / `--cfg_name` / `--step` | *(Required)* | Checkpoint directory (`<path_to_ckpt>/DiFaReli++/`), config YAML (`DiFaReli++.yaml`), and step (`300000`) |
-| `--sample_pair_json` | `None` | Path to JSON file specifying `src`/`dst` pairs (`--sample_pair_mode`: `pair`, `pairwise`, `list`) |
-| `--src_dst` | `[]` | Explicit CLI pair override, e.g., `--src_dst max.png 61992.png` |
-| `--itp_step` / `--batch_size` | `15` / `15` | Number of interpolation frames and forward-pass sub-batch size |
+| `--sample_pair_json` | `None` | Path to JSON file specifying `src`/`dst` pairs |
+| `--itp_step` / `--batch_size` | `15` / `15` | Number of relit frames and forward-pass sub-batch size |
 | `--out_dir` / `--save_vid` / `--fps` | *(Req)* / `False` / `20` | Output directory, MP4 video export flag, and video frame rate |
 | **Reshadowing Mode** | | |
 | `--shadow_diff_inc_c` | `False` | Lock source shadow mask and linearly increase shadow scalar $C \to 1.0$ (strengthen shadow) |
 | `--shadow_diff_dec_c` | `False` | Lock source shadow mask and linearly decrease shadow scalar $C \to 0.0$ (diffuse / remove shadow) |
 | `--reshadow_with_given_c` | `None` | Override starting $C \in [0, 1]$ for reshadowing (defaults to $C_{\text{src}}$) |
 | `--force_src_shading_for_reshadow` | `False` | Keep source SH shading fixed across frames (used with `--shadow_diff_inc_c`) |
-| `--force_diffuse_shading_for_reshadow` | `False` | Use ambient-only diffuse SH shading on target frames (used with `--shadow_diff_dec_c`) |
-| `--itp_diffuse_sh` | `False` | Linearly interpolate SH from source to diffuse ambient shading (use with `--force_diffuse_shading_for_reshadow`) |
+| `--force_diffuse_shading_for_reshadow` | `False` | Use diffuse shading reference on target frames (used with `--shadow_diff_dec_c`) |
+| `--itp_diffuse_sh` | `False` | Interpolate SH from source to diffuse shading reference (use with `--force_diffuse_shading_for_reshadow`) |
 | **Relighting Mode (`rotateSH` & `targetSH`)** | | |
-| `--rotate_sh` / `--rotate_sh_axis` | `False` / `0` | Rotate source SH lighting 360° around axis `0`, `1`, or `2` |
-| `--relight_with_dst_c` | `False` | Scale ray-traced target shadow masks by destination subject's $C_{\text{dst}}$ |
-| `--relight_with_given_c` | `None` | Scale ray-traced target shadow masks by a custom $C \in [0, 1]$ |
-| `--relight_with_strongest_c` | `False` | Scale ray-traced target shadow masks by $C = 1.0$ |
+| `--rotate_sh` / `--rotate_sh_axis` | `False` / `2` | Rotate source SH lighting 360° around axis `0`, `1`, or `2` |
+| `--relight_with_dst_c` | `False` | Scale target shadow map by destination subject's $C_{\text{dst}}$ |
+| `--relight_with_given_c` | `None` | Scale target shadow map by a custom $C \in [0, 1]$ |
+| `--relight_with_strongest_c` | `False` | Scale target shadow map by $C = 1.0$ |
 
 ```text
 examples/res/
