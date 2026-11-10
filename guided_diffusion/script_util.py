@@ -3,6 +3,9 @@ from venv import logger
 
 from . import gaussian_diffusion as gd
 from guided_diffusion.respace import SpacedDiffusion, space_timesteps
+# DiFaReli++_diffusion
+from guided_diffusion.models.spatial_cond_arch.unet_spatial_condition_hadamart import UNetModel_SpatialCondition_Hadamart, EncoderUNet_SpatialCondition
+# DiFaReli++_singleshot
 from guided_diffusion.models.spatial_cond_arch.unet_spatial_condition_hadamart_no_dpm_notime import UNetModel_SpatialCondition_Hadamart_No_DPM_NoTime, EncoderUNet_SpatialCondition
 
 from guided_diffusion.my_logger import createLogger
@@ -113,6 +116,28 @@ def create_model(cfg, all_cfg=None):
             condition_dim=cfg.condition_dim,
             conditioning=True,
             pool=cfg.pool
+        ),
+    elif cfg.arch == 'UNetCond_SpatialCondition_Hadamart':
+        return UNetModel_SpatialCondition_Hadamart(
+            image_size=cfg.image_size,
+            in_channels=cfg.in_channels,
+            model_channels=cfg.num_channels,
+            out_channels=cfg.out_channels,
+            num_res_blocks=cfg.num_res_blocks,
+            attention_resolutions=tuple(attention_ds),
+            dropout=cfg.dropout,
+            channel_mult=channel_mult,
+            use_checkpoint=cfg.use_checkpoint,
+            num_heads=cfg.num_heads,
+            num_head_channels=cfg.num_head_channels,
+            num_heads_upsample=cfg.num_heads_upsample,
+            use_scale_shift_norm=cfg.use_scale_shift_norm,
+            resblock_updown=cfg.resblock_updown,
+            use_new_attention_order=cfg.use_new_attention_order,
+            condition_dim=cfg.condition_dim,
+            condition_proj_dim=cfg.condition_proj_dim,
+            conditioning=cfg.conditioning,
+            all_cfg=all_cfg,
         ),
     else: raise NotImplementedError(f"Unknown model architecture: {cfg.arch}")
 
