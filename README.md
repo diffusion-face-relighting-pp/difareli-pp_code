@@ -413,10 +413,4 @@ examples/res/
 
 ## 4. Training
 
-Training DiFaReli++ follows a 4-stage pipeline:
-1. **Compute Shadow Maps**: Run `create_dataset.py` and DiFaReli reshadowing + `gen_smooth_Sdiff.py` on FFHQ (`--set train`, see [Section 2](#2-preparing-the-data-for-inference)) to obtain spatial shadow maps (`shadow_diff_SS_with_c_simplified`).
-2. **Train DiFaReli++ Diffusion Model**: Train the diffusion model (`train_difarelipp_diffusion.py`) on the FFHQ dataset with spatial shadow maps (`DiFaReli++_diffusion.yaml`).
-3. **Generate Paired Relit Dataset**: Use the trained DiFaReli++ diffusion model to relight source portraits (`<src_id>_input.png`) toward target subjects' lighting & shadows (`<src_id>_<dst_id>_relit.png`), then extract their paired DECA shadings and shadow maps.
-4. **Train DiFaReli++ Single-Shot Model**: Train the single-shot non-DPM generator (`train_difarelipp_singleshot.py`) on the paired relit dataset (`DiFaReli++.yaml`).
-
-👉 **See [TRAINING.md](TRAINING.md) for the complete training guide, dataset directory structures, filename conventions, and training commands.**
+Please refer to **[TRAINING.md](TRAINING.md)** for the complete training guide (preparing shadow maps, training the DiFaReli++ diffusion model, generating the paired relit dataset, and training the single-shot model).
