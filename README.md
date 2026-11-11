@@ -1,7 +1,7 @@
 # [DiFaReli++: Diffusion Face Relighting with Consistent Cast Shadows](https://diffusion-face-relighting-pp.github.io/) (TPAMI 2026)
 ### [Puntawat Ponglertnapakorn](https://puntawatp.github.io/), [Nontawat Tritrong](https://scholar.google.com/citations?user=2txp4s0AAAAJ&hl=en), [Supasorn Suwajanakorn](https://www.supasorn.com/)
 
-<img src="./misc/teaser.png" width="77%">
+<img src="./misc/teaser.png" width="90%">
 
 
 ---
